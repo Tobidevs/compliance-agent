@@ -8,6 +8,7 @@ class ComplianceAgentState(TypedDict):
     category: Annotated[str, "The category of the compliance requirement."]
     
     regulations: Annotated[list[dict], "The retrieved regulations relevant to the framework and category."]
+    policies: Annotated[list[dict], "The retrieved policies relevant to the framework and category."]
     
     
     

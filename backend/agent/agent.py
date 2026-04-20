@@ -18,7 +18,7 @@ def run_compliance_agent(framework: str, category: str):
         "regulations": []
     }
     final_state = compliance_agent.invoke(initial_state)
-    return final_state["regulations"]
+    return final_state
 
 
-print(run_compliance_agent(framework="SOC2", category="Identity & Access Management"))
+print(run_compliance_agent(framework="soc2", category="Identity & Access Management"))
