@@ -3,6 +3,8 @@ backend/.env/*
 backend/.venv
 backend/.venv/*
 backend/__pycache__
+backend/chroma_db
+backend/chroma_db/*
 .vscode
 __pycache__
 node_modules
