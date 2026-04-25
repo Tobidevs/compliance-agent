@@ -1,24 +1,31 @@
 from langgraph.graph import StateGraph, START, END
 from .state import ComplianceAgentState
-from .nodes import extraction_node
+from .nodes import extraction_node, policy_validator_node
+import asyncio
 
 compliance_agent_builder = StateGraph(ComplianceAgentState)
 
 compliance_agent_builder.add_node("extraction", extraction_node)
+compliance_agent_builder.add_node("policy_validation", policy_validator_node)
 
 compliance_agent_builder.add_edge(START, "extraction")
-compliance_agent_builder.add_edge("extraction", END)
+compliance_agent_builder.add_edge("extraction", "policy_validation")
+compliance_agent_builder.add_edge("policy_validation", END)
 
 compliance_agent = compliance_agent_builder.compile()
 
-def run_compliance_agent(framework: str, category: str):
+async def run_compliance_agent(framework: str, category: str):
     initial_state = {
         "framework": framework,
         "category": category,
         "regulations": []
     }
-    final_state = compliance_agent.invoke(initial_state)
+    final_state = await compliance_agent.ainvoke(initial_state)
     return final_state
 
 
-print(run_compliance_agent(framework="soc2", category="Identity & Access Management"))
+async def main():
+    await run_compliance_agent(framework="soc2-policy-doc", category="Data Protection & Privacy")
+    print("Run completed successfully.")
+
+asyncio.run(main())

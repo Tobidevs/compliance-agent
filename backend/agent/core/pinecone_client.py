@@ -28,8 +28,7 @@ class PineconeClient:
         vector: list[float],
         sparse_values: list[float],
         sparse_indices: list[int],
-        filter: dict | None = None,
-    ):
+        filter: dict | None = None,    ):
         # results = self.index.query(
         #     namespace=namespace,
         #     top_k=top_k,
@@ -58,4 +57,5 @@ class PineconeClient:
                 "rank_fields": ["requirement"],
             },
         )
-        return ranked_results.result.hits # todo Validate Response Structure
+        
+        return ranked_results.result.hits

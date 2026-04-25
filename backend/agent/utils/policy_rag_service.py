@@ -71,28 +71,10 @@ class PolicyRAGService:
     def format_policy_results(self, results):
         if not results:
             return []
-
-        ids = (results.get("ids") or [[]])[0]
+        # Results also contain filename, id, policy_id, chunk_index, chunk_index, distance, and rank. 
+        # Content is the only field needed for now, add more fields if necessary in the future.
         documents = (results.get("documents") or [[]])[0]
-        metadatas = (results.get("metadatas") or [[]])[0]
-        distances = (results.get("distances") or [[]])[0]
-
-        formatted_results = []
-        for i, doc_id in enumerate(ids):
-            metadata = metadatas[i] if i < len(metadatas) and metadatas[i] else {}
-            formatted_results.append(
-                {
-                    "id": doc_id,
-                    "policy_id": metadata.get("policy_id"),
-                    "filename": metadata.get("filename"),
-                    "chunk_index": metadata.get("chunk_index"),
-                    "content": documents[i] if i < len(documents) else None,
-                    "distance": distances[i] if i < len(distances) else None,
-                    "rank": i + 1,
-                }
-            )
-
-        return formatted_results
+        return [{"content": doc} for doc in documents]
 
     def delete_policy(self, policy_id: str):
         self.vector_store.delete(ids=[policy_id])

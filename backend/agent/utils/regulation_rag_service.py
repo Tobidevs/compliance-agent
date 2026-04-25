@@ -9,7 +9,7 @@ load_dotenv()
 
 
 class RegulationRAGService:
-    def __init__(self, index: str, namespace: str = "soc2", pc: Pinecone | None = None):
+    def __init__(self, index: str, namespace: str = "soc2-policy-doc", pc: Pinecone | None = None):
         self.pc = pc or Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         self.vector_store = PineconeClient(index_name=index, pc=self.pc)
         self.namespace = namespace
@@ -59,6 +59,7 @@ class RegulationRAGService:
                         "category": result.fields["category"],
                         "title": result.fields["title"],
                         "requirement": result.fields["requirement"],
+                        "policy_assertion": result.fields["policy_assertion"],
                         "keywords": result.fields["keywords"],
                         "artifact_types": result.fields["artifact_types"],
                         "testing_criteria": result.fields["testing_criteria"],
