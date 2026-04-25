@@ -1,25 +1,45 @@
-POLICY_EXTRACTION_PROMPT = """
-Extract compliance-relevant statements from this policy document.
-For each distinct claim output:
-- topic: short label (human-readable only, not used for matching)
-- strength: "explicit" | "implicit" | "absent"
-- excerpt: exact sentence(s) from the policy. Null if absent.
-- policy_assertion: one sentence describing what protection or control 
-  the policy puts in place. 
+POLICY_EXTRACTION_PROMPT = """You are a precise document parser. Your only job is to extract verbatim text from policy excerpts and match it to the regulation it best satisfies. You do NOT assess compliance, draw inferences, or reason about gaps.
 
-  Rules for policy_assertion:
-  - Describe the WHAT (what is protected or controlled), not the HOW or WHERE
-  - No section references ("Section 7", "per §4.2")
-  - No regulatory references ("GDPR", "SOC 2", "CC6.1")
-  - No trigger conditions ("upon account deletion", "when requested")
-  - No system-specific terms ("via account deletion", "using Lambda")
+## Task
+For each regulation provided, find the single best-matching claim from the policy excerpts.
 
-  Good: "Users have the right to request deletion of all their personal data."
-  Bad:  "Section 7 establishes deletion standards triggered via account deletion 
-         for GDPR compliance."
+## Rules
+- Output MUST contain exactly one object per regulation.
+- Each object maps to exactly one regulation by its `regulation_id`.
+- `excerpt` MUST be copied verbatim from the policy excerpts, including surrounding context. Do not paraphrase, summarize, or infer. 
+- If no relevant text exists for a regulation, set `excerpt` to null and `title` to "No matching claim found".
+- Select the claim that most directly addresses the regulation's stated requirement. If multiple claims are relevant, pick the single best one.
 
-Policy excerpts:
+## Input
+
+### Regulations
+{regulations}
+
+### Policy Excerpts
 {excerpts}
 
-Return a JSON array only.
+## Output Format
+Return the JSON array only.
+"""
+
+POLICY_VALIDATION_PROMPT = """You are a compliance analyst performing gap analysis against regulatory controls. For each item in the input, reason about how well the `excerpt` satisfies the `regulation_requirement` and assign a structured validation result.
+
+## Scoring Rubric
+| Score | Coverage | Criteria |
+|-------|----------|----------|
+| 0.0 | none | `excerpt` is null, empty, or entirely unrelated |
+| 0.3 | marginal | References the general topic but misses the core requirement |
+| 0.7 | partial | Addresses the requirement but has meaningful gaps |
+| 1.0 | full | Directly and completely satisfies the requirement |
+
+## Rules
+- One result per input item, in the same order.
+- `regulation_id` must match the input exactly.
+- If `excerpt` is null or empty, assign `0.0 / none` immediately without reasoning.
+- Only use anchor scores: `0.0, 0.3, 0.7, 1.0`. No interpolated values.
+- `rationale` must name what is satisfied, what is missing, and what is needed for full coverage.
+- Reason only on provided text. Do not infer intent or assume unstated policies exist.
+
+## Input
+{extraction_results}
 """

@@ -7,8 +7,8 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 
-from .prompts import POLICY_EXTRACTION_PROMPT
-from .state import ComplianceAgentState, PolicyValidationResults
+from .prompts import POLICY_EXTRACTION_PROMPT, POLICY_VALIDATION_PROMPT
+from .state import ComplianceAgentState, PolicyExtractionResults, PolicyValidationResults
 from .utils.regulation_rag_service import RegulationRAGService
 from .utils.policy_rag_service import PolicyRAGService
 
@@ -19,6 +19,7 @@ policy_service = PolicyRAGService(
 )
 
 model = init_chat_model(model="anthropic:claude-haiku-4-5")
+policy_extraction_model = model.with_structured_output(PolicyExtractionResults)
 policy_validation_model = model.with_structured_output(PolicyValidationResults)
 
 
@@ -120,43 +121,55 @@ async def extraction_node(state: ComplianceAgentState):
         regulation_results
     )
     formatted_policies = policy_service.format_policy_results(policy_results)
+
     return {"regulations": formatted_regulations, "policies": formatted_policies}
 
 
 async def policy_validator_node(state: ComplianceAgentState):
 
-    policies_to_validate = []
-
-    for i, policy in enumerate(state["policies"]):
-        policies_to_validate.append(
-            f"""
-            Policy Excerpt {i+1}:
-            {policy['content']}
-            """
-        )
-
-    response = policy_validation_model.invoke(
+    extracted_policies = policy_extraction_model.invoke(
         [
             HumanMessage(
                 content=POLICY_EXTRACTION_PROMPT.format(
-                    excerpts="\n\n".join(policies_to_validate),
-                    framework=state["framework"],
-                    category=state["category"],
+                    regulations="\n\n".join(
+                        [
+                            f"{reg['title']} ({reg['control_id']}): {reg['requirement']}"
+                            for reg in state["regulations"]
+                        ]
+                    ),
+                    excerpts="\n\n".join(
+                        [
+                            f"Policy Excerpt {i+1}: {policy['content']}"
+                            for i, policy in enumerate(state["policies"])
+                        ]
+                    ),
                 )
             )
         ]
     )
+    
+    validation_results = policy_validation_model.invoke(
+        [
+            HumanMessage(
+                content=POLICY_VALIDATION_PROMPT.format(
+                    extraction_results=extracted_policies.results
+                )
+                
+            )
+        ]
+    )
+    
 
-    claims = [f"{result.policy_assertion}" for result in response.results]
-    requirements = [f"{reg['policy_assertion']}" for reg in state["regulations"]]
+    # claims = [f"{result.policy_assertion}" for result in response.results]
+    # requirements = [f"{reg['policy_assertion']}" for reg in state["regulations"]]
 
-    claim_embeddings = [policy_service.openai_client.embed_batch(claims)]
-    requirement_embeddings = [policy_service.openai_client.embed_batch(requirements)]
-    similarity_scores = [
-        cosine_similarity(claim_emb, req_emb)
-        for claim_emb in claim_embeddings
-        for req_emb in requirement_embeddings
-    ]
+    # claim_embeddings = [policy_service.openai_client.embed_batch(claims)]
+    # requirement_embeddings = [policy_service.openai_client.embed_batch(requirements)]
+    # similarity_scores = [
+    #     cosine_similarity(claim_emb, req_emb)
+    #     for claim_emb in claim_embeddings
+    #     for req_emb in requirement_embeddings
+    # ]
 
     # if similarity_scores:
     #     similarity_matrix = similarity_scores[0]
@@ -182,4 +195,4 @@ async def policy_validator_node(state: ComplianceAgentState):
     #         print(f"  Requirement: {match['requirement']}")
     #         print(f"  Claim: {match['claim']}")
 
-    return {"policy_validation_results": response.results}
+    return {"policy_validation_results": validation_results.results}

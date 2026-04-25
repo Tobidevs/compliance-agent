@@ -25,7 +25,7 @@ async def run_compliance_agent(framework: str, category: str):
 
 
 async def main():
-    await run_compliance_agent(framework="soc2-policy-doc", category="Data Protection & Privacy")
+    await run_compliance_agent(framework="soc2-policy-doc", category="Identity & Access Management")
     print("Run completed successfully.")
 
 asyncio.run(main())
