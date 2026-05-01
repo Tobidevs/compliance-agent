@@ -59,7 +59,7 @@ class RegulationRAGService:
                         "category": result.fields["category"],
                         "title": result.fields["title"],
                         "requirement": result.fields["requirement"],
-                        "policy_assertion": result.fields["policy_assertion"],
+                        "policy_assertion": (result.fields["policy_assertion"] if "policy_assertion" in result.fields else None),
                         "keywords": result.fields["keywords"],
                         "artifact_types": result.fields["artifact_types"],
                         "testing_criteria": result.fields["testing_criteria"],

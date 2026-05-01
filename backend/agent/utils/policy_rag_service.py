@@ -11,7 +11,7 @@ load_dotenv()
 
 
 class PolicyRAGService:
-    def __init__(self, persist_directory: str | None = None):
+    def __init__(self, persist_directory: str | None = None, pc: Pinecone | None = None):
         persist_directory = persist_directory or os.getenv(
             "CHROMA_PERSIST_DIR", "./chroma_db"
         )
@@ -19,6 +19,7 @@ class PolicyRAGService:
             collection_name="compliance-policies",
             persist_directory=persist_directory,
         )
+        self.pc = pc or Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         self.openai_client = OpenAIClient(api_key=os.getenv("OPENAI_API_KEY"))
 
     def add_policy(self, policy_id: str, policy_file: str, metadata: dict):
@@ -63,10 +64,22 @@ class PolicyRAGService:
                 "Failed to process the PDF content and store it in the vector database."
             ) from e
 
-    def query_policies(self, query: str, top_k: int = 5):
+    def query_policies(self, query: str, top_k: int = 10):
         embedding = self.openai_client.get_embedding(query)
         results = self.vector_store.query(query_embedding=embedding, top_k=top_k)
-        return results
+        
+        docs = [{"text": doc} for doc in results["documents"][0]]
+        
+        ranked_results = self.pc.inference.rerank(
+            model="bge-reranker-v2-m3",
+            query=query,
+            documents=[doc["text"] for doc in docs],
+            top_n=6,
+            rank_fields=["text"],
+        )
+        results_array = [result.document.text for result in ranked_results.data]
+        
+        return results_array
 
     def format_policy_results(self, results):
         if not results:

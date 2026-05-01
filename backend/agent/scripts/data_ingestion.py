@@ -8,7 +8,7 @@ load_dotenv()
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 
 index_name = "compliance-frameworks"
-target_namespace = "soc2-policy-doc"
+target_namespace = "soc2-source-code"
 
 if not pc.has_index(index_name):
     pc.create_index(
@@ -55,7 +55,6 @@ def ingest_compliance_data(file_path: str):
                     "category": d["category"],
                     "title": d["title"],
                     "requirement": d["requirement"],
-                    "policy_assertion": d["policy_assertion"],
                     "keywords": d["keywords"],
                     "artifact_types": d["artifact_types"],
                     "testing_criteria": d["testing_criteria"],
@@ -68,7 +67,7 @@ def ingest_compliance_data(file_path: str):
     index.upsert(vectors=records, namespace=target_namespace)
 
 
-csv_path = os.path.join(os.path.dirname(__file__), "soc2-policy-doc.csv")
+csv_path = os.path.join(os.path.dirname(__file__), "SOC2 Source Code Controls.csv")
 ingest_compliance_data(csv_path)
 print(
     f"Data ingestion completed successfully in index '{index_name}' namespace '{target_namespace}'."

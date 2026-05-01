@@ -1,21 +1,7 @@
 from typing import Annotated, TypedDict, Literal
 from pydantic import BaseModel, Field
-
-
-class ComplianceAgentState(TypedDict):
-    # Input state
-    framework: Annotated[str, "The compliance framework to be used."]
-    category: Annotated[str, "The category of the compliance requirement."]
-
-    regulations: Annotated[
-        list[dict], "The retrieved regulations relevant to the framework and category."
-    ]
-    policies: Annotated[
-        list[dict], "The retrieved policies relevant to the framework and category."
-    ]
-    policy_validation_results: Annotated[
-        list[dict], "The results of validating policies against regulations."
-    ]
+from langgraph.graph.message import MessagesState
+ 
 
 class PolicyExtractionResult(BaseModel):
     title: str = Field(description="The title of the policy claim.")
@@ -37,3 +23,42 @@ class PolicyValidationResult(BaseModel):
 
 class PolicyValidationResults(BaseModel):
     results: list[PolicyValidationResult] = Field(default_factory=list)
+
+    
+
+class EvidenceResult(BaseModel):
+    regulation_id: str
+    title: str
+    requirement: str
+    files_searched: list[str]
+    code_snippets: list[str]
+    description: str
+    no_evidence_found: bool
+    
+class EvidenceSubAgentState(MessagesState):
+    regulation_id: str
+    title: str
+    requirement: str
+    evidence_items: list[EvidenceResult]
+
+class ComplianceAgentState(TypedDict):
+    # Input state
+    framework: Annotated[str, "The compliance framework to be used."]
+    category: Annotated[str, "The category of the compliance requirement."]
+    source_code_category: Annotated[str, "The category to search for in the source code repository."]
+
+    regulations: Annotated[
+        list[dict], "The retrieved regulations relevant to the framework and category."
+    ]
+    policies: Annotated[
+        list[dict], "The retrieved policies relevant to the framework and category."
+    ]
+    policy_excerpts: Annotated[
+        list[dict], "The extracted excerpts from policies that are relevant to the regulations."
+    ]
+    policy_validation_results: Annotated[
+        list[dict], "The results of validating policies against regulations."
+    ]
+    evidence_results: Annotated[
+        list[EvidenceResult], "The processed evidence results that summarize the findings from the codebase search."
+    ]

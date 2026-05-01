@@ -1,12 +1,13 @@
 from langgraph.graph import StateGraph, START, END
 from .state import ComplianceAgentState
-from .nodes import extraction_node, policy_validator_node
+from .nodes import extraction_node, invoke_evidence_subagent, policy_validator_node
 import asyncio
 
 compliance_agent_builder = StateGraph(ComplianceAgentState)
 
 compliance_agent_builder.add_node("extraction", extraction_node)
 compliance_agent_builder.add_node("policy_validation", policy_validator_node)
+compliance_agent_builder.add_node("evidence_subagent", invoke_evidence_subagent)
 
 compliance_agent_builder.add_edge(START, "extraction")
 compliance_agent_builder.add_edge("extraction", "policy_validation")
