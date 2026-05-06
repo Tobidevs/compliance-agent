@@ -43,28 +43,54 @@ class GitHubMCPManager:
             else:
                 print(f"Tool '{tool_name}' not found.")
                 return None
-    @tool
+
     async def search_codebase(self, query: str):
-        """ Search the codebase using GitHub's code search tool. The query should be in the format:
+        """Search the codebase using GitHub's code search tool. The query should be in the format:
         "search_term repo:owner/repo_name
         """
-        async with self.client.session("github") as github_session:
-            result = await github_session.call_tool("search_code", {"query": query})
-            raw = []
-            for block in result.content:
-                text = block.text
-                for line in text.split("\n"):
-                    if "/" in line and "." in line:
-                        raw.append(line.strip())
+        try:
 
-            data = json.loads(raw[0])
-            return [item["path"] for item in data["items"]]
+            async with self.client.session("github") as github_session:
+                result = await github_session.call_tool("search_code", {"query": query})
+                if not result.content:
+                    return []
 
-    @tool
+                content_text = result.content[0].text
+                try:
+                    data = json.loads(content_text)
+                except json.JSONDecodeError:
+                    return []
+
+                return [item["path"] for item in data.get("items", [])]
+        except Exception as e:
+            print(f"Error during code search: {e}")
+            return []
+
     async def get_file_content(self, owner: str, repo: str, path: str):
-        """ Retrieve the content of a file from a GitHub repository. """
+        """Retrieve the content of a file from a GitHub repository."""
         async with self.client.session("github") as github_session:
             result = await github_session.call_tool(
-                "get_file_content", {"owner": owner, "repo": repo, "path": path}
+                "get_file_contents", {"owner": owner, "repo": repo, "path": path}
             )
-            return result.content[0].text
+            if len(result.content) > 1 and result.content[1]:
+                return f"{path}\n\n{result.content[1].resource.text}"
+            else:
+                content_text = result.content[0].text
+                try:
+                    data = json.loads(content_text)
+                except json.JSONDecodeError:
+                    return f"{path}\n\n{content_text}"
+
+                if not isinstance(data, list):
+                    return data
+
+                results_array = []
+                for item in data:
+                    results_array.append(
+                        {
+                            "name": item.get("name"),
+                            "entry_type": item.get("type"),
+                            "path": item.get("path"),
+                        }
+                    )
+                return results_array

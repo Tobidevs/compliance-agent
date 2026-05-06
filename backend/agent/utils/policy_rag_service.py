@@ -84,6 +84,8 @@ class PolicyRAGService:
     def format_policy_results(self, results):
         if not results:
             return []
+        if isinstance(results, list):
+            return [{"content": doc} for doc in results]
         # Results also contain filename, id, policy_id, chunk_index, chunk_index, distance, and rank. 
         # Content is the only field needed for now, add more fields if necessary in the future.
         documents = (results.get("documents") or [[]])[0]

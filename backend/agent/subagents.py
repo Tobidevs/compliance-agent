@@ -1,18 +1,33 @@
 from langgraph.graph import StateGraph, START, END
-from .state import EvidenceSubAgentState
+from .state import SubAgentInput
 from langgraph.prebuilt import ToolNode
 
-from .subagent_nodes import concluded_evidence, gather_evidence_node, process_evidence_node
+from .tools import conclude_evidence, think
+from .subagent_nodes import (
+    gather_evidence_node,
+    github_mcp_manager,
+    is_finished,
+    process_evidence_node,
+)
 
-evidence_subagent_builder = StateGraph(EvidenceSubAgentState)
+evidence_subagent_builder = StateGraph(SubAgentInput)
 
 evidence_subagent_builder.add_node("gather_evidence", gather_evidence_node)
-evidence_subagent_builder.add_node("tool_call", ToolNode(["search_codebase", "get_file_content", "conclude_evidence"]))
+evidence_subagent_builder.add_node(
+    "tool_call",
+    ToolNode(
+        [
+            github_mcp_manager.get_file_content,
+            conclude_evidence,
+            think,
+        ]
+    ),
+)
 evidence_subagent_builder.add_node("process_evidence", process_evidence_node)
 
 evidence_subagent_builder.add_edge(START, "gather_evidence")
 evidence_subagent_builder.add_edge("gather_evidence", "tool_call")
-evidence_subagent_builder.add_conditional_edges("tool_call", concluded_evidence, {
+evidence_subagent_builder.add_conditional_edges("tool_call", is_finished, {
     "gather_evidence": "gather_evidence",
     "process_evidence": "process_evidence",
 })

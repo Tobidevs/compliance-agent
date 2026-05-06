@@ -19,6 +19,7 @@ class RegulationRAGService:
         query: str,
         namespace: str | None,
         top_k: int = 5,
+        rerank_top_k: int = 5,
         category: str | None = None,
     ):
         dense_query_embedding = self.pc.inference.embed(
@@ -39,12 +40,14 @@ class RegulationRAGService:
                 namespace=namespace or self.namespace,
                 query=query,
                 top_k=top_k,
+                rerank_top_k=rerank_top_k,
                 vector=d["values"],
                 sparse_values=s["sparse_values"],
                 sparse_indices=s["sparse_indices"],
                 filter={"category": {"$eq": category}} if category else None,
             )
             results.extend(query_response)
+            
 
         return results
 

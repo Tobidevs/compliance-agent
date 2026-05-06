@@ -25,6 +25,7 @@ class PineconeClient:
         namespace: str,
         query: str,
         top_k: int,
+        rerank_top_k: int,
         vector: list[float],
         sparse_values: list[float],
         sparse_indices: list[int],
@@ -53,7 +54,7 @@ class PineconeClient:
             rerank={
                 "model": "bge-reranker-v2-m3",
                 "query": query,
-                "top_n": top_k,
+                "top_n": rerank_top_k,
                 "rank_fields": ["requirement"],
             },
         )

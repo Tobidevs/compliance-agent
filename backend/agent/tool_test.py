@@ -89,12 +89,13 @@ async def main():
 
         # print(result.content[0].text)
         
-    policy_manager = PolicyRAGService()
-    policy_query = (
-        f"Retrieve compliance policies relevant to soc2"
-        f"and category Identify and Access Management."
+    github_mcp_manager = GitHubMCPManager()
+    file_paths = await github_mcp_manager.get_file_content(
+        repo="mavresume",
+        owner="acmuta",
+        path="lib"
     )
-    results = policy_manager.query_policies(query=policy_query)
+    print(file_paths)
     
 
 
