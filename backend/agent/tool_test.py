@@ -23,17 +23,10 @@
 # if __name__ == "__main__":
 #     asyncio.run(main())
 
-from http import client
-import json
-import os
 import asyncio
-
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain.agents import create_agent
 from dotenv import load_dotenv
 
 from .utils.github_mcp import GitHubMCPManager
-from .utils.policy_rag_service import PolicyRAGService
 
 load_dotenv()
 
@@ -90,12 +83,12 @@ async def main():
         # print(result.content[0].text)
         
     github_mcp_manager = GitHubMCPManager()
-    file_paths = await github_mcp_manager.get_file_content(
-        repo="mavresume",
+    tree = await github_mcp_manager.get_repository_tree(
         owner="acmuta",
-        path="lib"
+        repo="mavresume",
+        recursive=True,
+        path_filter="app/"
     )
-    print(file_paths)
     
 
 

@@ -20,7 +20,7 @@ class GitHubMCPManager:
                     "url": "https://api.githubcopilot.com/mcp/",
                     "headers": {
                         "Authorization": f"Bearer {os.getenv('GITHUB_PERSONAL_ACCESS_TOKEN')}",
-                        "X-MCP-Toolsets": "repos,code_search",  # Edit for specific toolsets
+                        "X-MCP-Toolsets": "repos,code_search,issues,pull_requests,git",  # Edit for specific toolsets
                     },
                 }
             }
@@ -31,7 +31,6 @@ class GitHubMCPManager:
         async with self.client.session("github") as github_session:
             tools = await github_session.list_tools()
 
-        print("Available GitHub MCP Tools:")
         return tools.tools
 
     async def get_input_schema(self, tool_name: str):
@@ -94,3 +93,45 @@ class GitHubMCPManager:
                         }
                     )
                 return results_array
+
+    async def get_repository_tree(
+        self,
+        owner: str,
+        repo: str,
+        tree_sha: str | None = None,
+        recursive: bool = False,
+        path_filter: str | None = None,
+    ):
+        """Retrieve the repository tree for a ref or tree SHA."""
+        payload = {
+            "owner": owner,
+            "repo": repo,
+            "recursive": recursive,
+        }
+        if tree_sha:
+            payload["tree_sha"] = tree_sha
+        if path_filter:
+            payload["path_filter"] = path_filter
+
+        async with self.client.session("github") as github_session:
+            result = await github_session.call_tool("get_repository_tree", payload)
+            if not result.content:
+                return []
+
+            content_text = result.content[0].text
+            try:
+                data = json.loads(content_text)
+            except json.JSONDecodeError:
+                data = content_text
+            
+            results_array = []
+            if isinstance(data, dict) and "tree" in data:
+                for item in data["tree"]:
+                    results_array.append(
+                        {
+                            "path": item.get("path"),
+                            "type": item.get("type"),
+                        }
+                    )
+            
+            return results_array

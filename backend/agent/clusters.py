@@ -1,37 +1,5 @@
 
-
-CLUSTERS: dict[str, dict] = {
-    "access_auth": {
-        "prefixes": ["CC6"],
-        "path_keywords": [
-            "auth", "session", "login", "middleware", "jwt", "token",
-            "permission", "rbac", "oauth", "guard", "credential", "callback",
-        ],
-    },
-    "change_management": {
-        "prefixes": ["CC8"],
-        "path_keywords": [
-            "deploy", "pipeline", "ci", "migration", "schema", "config",
-            "release", "dockerfile", "workflow", "action",
-        ],
-    },
-    "monitoring_logging": {
-        "prefixes": ["CC7", "CC4"],
-        "path_keywords": [
-            "log", "monitor", "alert", "audit", "trace", "error",
-            "event", "sentry", "datadog", "observe",
-        ],
-    },
-    "data_protection": {
-        "prefixes": ["A1", "CC9"],
-        "path_keywords": [
-            "encrypt", "crypto", "tls", "backup", "retention",
-            "pii", "data", "storage", "vault", "kms",
-        ],
-    },
-}
-
-PRIORITY_PATH_CAP = 12  # max priority paths per cluster to prevent context bloat
+from .state import EvidenceResult
 
 
 def group_controls_into_clusters(
@@ -41,7 +9,6 @@ def group_controls_into_clusters(
     Groups regulation + excerpt pairs into predefined clusters by control ID prefix.
     Unmatched controls fall into 'misc' so nothing is silently dropped.
     """
-
     result = {}
 
     for reg in regulations:
@@ -53,18 +20,31 @@ def group_controls_into_clusters(
         }
         result[reg.get("category", "misc")] = result.get(reg.get("category", "misc"), []) + [control]
         
-
-        # assigned = False
-        # for cluster_id, cluster_def in CLUSTERS.items():
-        #     if any(reg_id.startswith(prefix) for prefix in cluster_def["prefixes"]):
-        #         result[cluster_id].append(control)
-        #         assigned = True
-        #         break
-
-        # if not assigned:
-        #     result["misc"].append(control)
-
     return result
+
+def update_clusters_with_evidence(
+    clusters: dict[str, list[dict]],
+    evidence_items: list[EvidenceResult],
+) -> dict[str, list[dict]]:
+    """
+    Merges retrieved evidence items into the existing cluster structure by matching regulation_id.
+    This enriches the cluster data for downstream sub-agents without changing the overall organization.
+    """
+    for cluster_id, controls in clusters.items():
+        for control in controls:
+            reg_id = control["regulation_id"]
+            matching_evidence = next((e for e in evidence_items if e.regulation_id == reg_id), None)
+            if matching_evidence:
+                control["evidence"] = {
+                    "files_searched": matching_evidence.files_searched,
+                    "code_snippets": matching_evidence.code_snippets,
+                    "description": matching_evidence.description,
+                    "no_evidence_found": matching_evidence.no_evidence_found,
+                }
+    return clusters
+
+    
+
 
 def filter_paths_for_cluster(artifact_paths: list[str], keywords: list[str]) -> list[str]:
     """

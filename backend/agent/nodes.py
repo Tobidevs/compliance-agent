@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from typing import Literal
 from langchain_pinecone._utilities import cosine_similarity
@@ -6,6 +7,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Send
+from langgraph.config import get_stream_writer
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -14,18 +16,28 @@ from .prompts import (
     POLICY_EXTRACTION_PROMPT,
     POLICY_VALIDATION_PROMPT,
     EVIDENCE_SUBAGENT_SYSTEM_PROMPT,
+    VALIDATION_SUBAGENT_SYSTEM_PROMPT,
 )
 from .state import (
     ComplianceAgentState,
+    EvidenceResult,
     PolicyExtractionResults,
     PolicyValidationResults,
+    ValidationBatch,
 )
 from .utils.regulation_rag_service import RegulationRAGService
 from .utils.policy_rag_service import PolicyRAGService
 from .utils.github_mcp import GitHubMCPManager
-from .utils._agent_utils import _build_user_message
+from .utils.agent_utils import (
+    _build_evidence_user_message,
+    _build_validation_user_message,
+)
 from .subagents import evidence_subagent
-from .clusters import group_controls_into_clusters, filter_paths_for_cluster, CLUSTERS
+from .clusters import (
+    group_controls_into_clusters,
+    filter_paths_for_cluster,
+    update_clusters_with_evidence,
+)
 
 load_dotenv()
 
@@ -35,11 +47,25 @@ policy_service = PolicyRAGService(
 )
 
 
-gpt_model = init_chat_model(model="openai:gpt-4.1")  # anthropic:claude-haiku-4-5
+gpt_model = init_chat_model(
+    model="anthropic:claude-haiku-4-5"
+)  # anthropic:claude-haiku-4-5
 policy_extraction_model = gpt_model.with_structured_output(PolicyExtractionResults)
 policy_validation_model = gpt_model.with_structured_output(PolicyValidationResults)
+compliance_validation_model = gpt_model.with_structured_output(ValidationBatch)
 
 github_mcp_manager = GitHubMCPManager()
+
+
+def _normalize_evidence_items(raw_items: list) -> list[EvidenceResult]:
+    normalized: list[EvidenceResult] = []
+    for item in raw_items:
+        if isinstance(item, EvidenceResult):
+            normalized.append(item)
+            continue
+        if isinstance(item, dict):
+            normalized.append(EvidenceResult(**item))
+    return normalized
 
 
 async def extraction_node(state: ComplianceAgentState):
@@ -129,19 +155,29 @@ async def invoke_evidence_subagent(state, config: RunnableConfig | None = None):
     )
 
     evidence_items = evidence_result.get("evidence_results", [])
-    if isinstance(evidence_items, list):
-        return {"evidence_items": evidence_items}
+    if not isinstance(evidence_items, list):
+        evidence_items = [evidence_items]
 
-    return {"evidence_items": [evidence_items]}
+    normalized_items = _normalize_evidence_items(evidence_items)
+    return {"evidence_items": normalized_items}
 
 
 async def artifact_extractor_node(
     state: ComplianceAgentState, config: RunnableConfig | None = None
 ):
+    writer = get_stream_writer()
+
     regulations = []
     categories = state["source_code_categories"]
     if isinstance(categories, str):
         categories = [categories]
+
+    writer(
+        {
+            "type": "status",
+            "message": f"Extracting regulations and fetching {state['repo_owner']}/{state['repo_name']} root directory file list...",
+        }
+    )
 
     for category in categories:
         regulations.extend(
@@ -167,9 +203,19 @@ async def artifact_extractor_node(
     }
 
 
-def dispatch(state: ComplianceAgentState, config: RunnableConfig | None = None):
+def evidence_subagent_dispatch(
+    state: ComplianceAgentState, config: RunnableConfig | None = None
+):
+    writer = get_stream_writer()
     clusters = state.get("clusters", {})
     file_paths = state.get("artifact_paths", [])
+
+    writer(
+        {
+            "type": "status",
+            "message": f"Gathering evidence for {state.get('framework', '')} compliance...",
+        }
+    )
 
     sends = []
     for cluster_id, controls in clusters.items():
@@ -185,7 +231,7 @@ def dispatch(state: ComplianceAgentState, config: RunnableConfig | None = None):
         }
         subagent_input["messages"] = [
             SystemMessage(content=EVIDENCE_SUBAGENT_SYSTEM_PROMPT),
-            HumanMessage(content=_build_user_message(subagent_input)),
+            HumanMessage(content=_build_evidence_user_message(subagent_input)),
         ]
 
         sends.append(
@@ -197,12 +243,98 @@ def dispatch(state: ComplianceAgentState, config: RunnableConfig | None = None):
 
     return sends
 
+def prepare_validation_subagents(state: ComplianceAgentState):
+    evidence_items = _normalize_evidence_items(state.get("evidence_items", []))
+    clusters = update_clusters_with_evidence(state.get("clusters", {}), evidence_items)
+    return {"evidence_items": evidence_items, "clusters": clusters}
+    
 
-def combine_evidence_results(state: ComplianceAgentState):
+def validation_subagent_dispatch(
+    state: ComplianceAgentState, config: RunnableConfig | None = None
+):
+    writer = get_stream_writer()
+    writer(
+        {
+            "type": "status",
+            "message": "Validating evidence and concluding compliance results...",
+        }
+    )
+    clusters = state.get("clusters", {})
     evidence_items = state.get("evidence_items", [])
-    if not isinstance(evidence_items, list):
-        evidence_items = [evidence_items]
-
-    return {"evidence_results": evidence_items}
 
 
+    sends = []
+    for cluster_id, controls in clusters.items():
+        if not controls:
+            continue
+
+        control_ids = {control.get("regulation_id") for control in controls}
+        scoped_evidence = [
+            item for item in evidence_items if item.regulation_id in control_ids
+        ]
+
+        subagent_input = {
+            "cluster_id": cluster_id,
+            "controls": controls,
+            "evidence_items": scoped_evidence,
+            "framework": state.get("framework", "N/A"),
+            "category": state.get("category", "N/A"),
+        }
+        subagent_input["messages"] = [
+            SystemMessage(content=VALIDATION_SUBAGENT_SYSTEM_PROMPT),
+            HumanMessage(content=_build_validation_user_message(subagent_input)),
+        ]
+
+        sends.append(
+            Send(
+                "validation_subagent",
+                subagent_input,
+            )
+        )
+
+    return sends
+
+
+def invoke_validation_subagent(state, config: RunnableConfig | None = None):
+    raw_response = compliance_validation_model.invoke(state["messages"])
+    if isinstance(raw_response, ValidationBatch):
+        validation_result = raw_response
+    else:
+        content = (
+            raw_response.content
+            if hasattr(raw_response, "content")
+            else str(raw_response)
+        )
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            parsed = {"validations": parsed}
+        if isinstance(parsed, dict) and isinstance(parsed.get("validations"), str):
+            parsed["validations"] = json.loads(parsed["validations"])
+        validation_result = ValidationBatch.model_validate(parsed)
+    writer = get_stream_writer()
+    writer(
+        {
+            "type": "updates",
+            "data": {"validation_results": validation_result.validations},
+        }
+    )
+
+    return {"validation_results": validation_result.validations}
+
+def combine_validation_results(state: ComplianceAgentState):
+    all_results: list = []
+    for item in state.get("validation_results", []):
+        if isinstance(item, list):
+            all_results.extend(item)
+        else:
+            all_results.append(item)
+
+    writer = get_stream_writer()
+    writer(
+        {
+            "type": "updates",
+            "data": {"validation_results": all_results},
+        }
+    )
+
+    return {"validation_results": all_results}

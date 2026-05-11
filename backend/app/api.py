@@ -1,15 +1,25 @@
+import json
 import shutil
 import os
 import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from agent.utils.policy_rag_service import PolicyRAGService
+from agent.agent import compliance_agent
 
 router = APIRouter()
 CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 policy_service = PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
 
+class StreamRequest(BaseModel):
+    framework: str
+    category: str
+    source_code_categories: list[str]
+    repo_owner: str
+    repo_name: str
 
 @router.post("/upload-policy")
 async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
@@ -25,7 +35,9 @@ async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
                 detail="Invalid file format. Please upload a valid PDF file.",
             )
 
-        with tempfile.NamedTemporaryFile(prefix="policy_", suffix=suffix, delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            prefix="policy_", suffix=suffix, delete=False
+        ) as temp_file:
             file_path = temp_file.name
             shutil.copyfileobj(policy_file.file, temp_file)
 
@@ -46,6 +58,56 @@ async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
             os.remove(file_path)
 
     return {"message": "File uploaded successfully."}
+
+
+@router.post("/stream")
+async def stream_results(
+    request: StreamRequest
+):
+    initial_state = {
+        "framework": request.framework,
+        "category": (
+            request.source_code_categories[0]
+            if isinstance(request.source_code_categories, list)
+            else request.source_code_categories
+        ),
+        "source_code_categories": request.source_code_categories,
+        "repo_owner": request.repo_owner,
+        "repo_name": request.repo_name,
+    }
+
+    def _json_default(value):
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+    async def event_generator():
+        async for mode, data in compliance_agent.astream(
+            initial_state, stream_mode=["custom", "updates"]
+        ):
+            
+
+            if mode == "custom":
+                yield f"data: {json.dumps({
+                    'type': 'status',
+                    'data': data
+                }, default=_json_default)}\n\n"
+
+                
+            elif mode == "updates":
+                yield f"data: {json.dumps({
+                    'type': 'update',
+                    'data': data
+                }, default=_json_default)}\n\n"
+
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @router.get("/health")

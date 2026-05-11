@@ -54,12 +54,74 @@ class EvidenceResult(BaseModel):
     no_evidence_found: bool
 
 
-class EvidenceSubAgentState(MessagesState):
-    regulation_id: str
-    title: str
-    requirement: str
-    evidence_results: list[EvidenceResult]
-    evidence_items: list[EvidenceResult]
+class EvidenceItem(BaseModel):
+    files_searched: list[str] = Field(
+        description="File paths searched for this control."
+    )
+    code_snippets: list[str] = Field(
+        description="Verbatim code snippets relevant to this control."
+    )
+    description: str = Field(
+        description="Factual description of what the evidence shows."
+    )
+    no_evidence_found: bool = Field(
+        description="True if no relevant evidence was found for this control."
+    )
+    
+    
+class EvidenceRef(BaseModel):
+    snippet: str = Field(
+        description=(
+            "Verbatim excerpt from a code_snippets entry, max 200 characters. "
+            "Do not paraphrase."
+        )
+    )
+
+class ValidationFinding(BaseModel):
+    type: Literal["violation", "pass", "gap"]
+    description: str = Field(
+        description="Specific finding tied directly to the evidence."
+    )
+    evidence_ref: EvidenceRef | None = Field(
+        default=None,
+        description=(
+            "Required for 'pass' and 'violation' findings. "
+            "Null only for NO_EVIDENCE gap findings."
+        ),
+    )
+    reasoning: str = Field(
+        default="",
+        description="Step-by-step reasoning for this individual finding."
+    )
+
+
+    
+class ControlValidation(BaseModel):
+    regulation_id: str = Field(
+        description="Regulation ID from the EvidenceResult (e.g. 'CC6.1.1')."
+    )
+    title: str = Field(description="Control title from the EvidenceResult.")
+    status: Literal["PASS", "FAIL", "PARTIAL", "NO_EVIDENCE"]
+    severity: Literal["critical", "high", "medium", "low"] | None = Field(
+        description=("Null for PASS and NO_EVIDENCE. " "Required for FAIL and PARTIAL.")
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Calibrated confidence float between 0.0 and 1.0.",
+    )
+    confidence_label: Literal["High", "Medium", "Low", "Inconclusive"]
+    findings: list[ValidationFinding] = Field(
+        min_length=1,
+        description="At least one finding required per control.",
+    )
+    overall_reasoning: str = Field(
+        description=(
+            "Synthesis across all findings justifying the final status. "
+            "Not a repeat of any single finding's reasoning."
+        )
+    )
+
 
 
 class ComplianceAgentState(TypedDict):
@@ -83,7 +145,8 @@ class ComplianceAgentState(TypedDict):
     policy_validation_results: Annotated[
         list[dict], "The results of validating policies against regulations."
     ]
-    evidence_items: Annotated[list[dict], operator.add]
+    evidence_items: Annotated[list[EvidenceResult], operator.add]
+    validation_results: Annotated[list[ControlValidation], operator.add]
 
     repo_owner: Annotated[str, "GitHub repository owner."]
     repo_name: Annotated[str, "GitHub repository name."]
@@ -109,3 +172,12 @@ class SubAgentInput(TypedDict):
     repo_owner: str
     repo_name: str
     evidence_results: list[EvidenceResult]
+
+
+
+
+
+class ValidationBatch(BaseModel):
+    validations: list[ControlValidation] = Field(
+        description="One ControlValidation per EvidenceResult in the input batch."
+    )

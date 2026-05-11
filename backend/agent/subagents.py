@@ -18,6 +18,7 @@ evidence_subagent_builder.add_node(
     ToolNode(
         [
             github_mcp_manager.get_file_content,
+            github_mcp_manager.get_repository_tree,
             conclude_evidence,
             think,
         ]

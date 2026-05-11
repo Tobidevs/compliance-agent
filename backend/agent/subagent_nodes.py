@@ -2,26 +2,49 @@ import json
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.config import get_stream_writer
 
 from .tools import conclude_evidence, think
 
-from .state import EvidenceResult, SubAgentInput
+from .state import EvidenceItem, EvidenceResult, SubAgentInput
 from .utils.github_mcp import GitHubMCPManager
 
 github_mcp_manager = GitHubMCPManager()
 
 model = init_chat_model(model="anthropic:claude-haiku-4-5")
-llm = model.bind_tools([github_mcp_manager.get_file_content, conclude_evidence, think])
+llm = model.bind_tools(
+    [
+        github_mcp_manager.get_file_content,
+        github_mcp_manager.get_repository_tree,
+        conclude_evidence,
+        think,
+    ]
+)
 
 
 def gather_evidence_node(state: SubAgentInput):
+    writer = get_stream_writer()
+
     response = llm.invoke(state["messages"])
+
+    # search_paths = ", ".join(
+    #     f"/{tool_call['args'].get('path', '')}"
+    #     for tool_call in response.tool_calls
+    # )
+
+    # writer({
+    #     "type": "status",
+    #     "message": f"Searching {search_paths}",
+    # })
+
     return {"messages": [response]}
 
 
 def is_finished(state: SubAgentInput):
 
-    last_message = state["messages"][-1] # todo reactor to check the entire tool call list 
+    last_message = state["messages"][
+        -1
+    ]  # todo reactor to check the entire tool call list
 
     # ToolNode returns ToolMessages
     if last_message.type == "tool":
@@ -32,11 +55,16 @@ def is_finished(state: SubAgentInput):
 
 
 def process_evidence_node(state: SubAgentInput):
+    writer = get_stream_writer()
 
-    files_searched = []
-    code_snippets = []
-    description = ""
-    no_evidence_found = False
+    writer(
+        {
+            "type": "status",
+            "message": "Processing evidence and concluding results...",
+        }
+    )
+
+    evidence_items: list[dict] = []
 
     if state["messages"]:
         last_message = state["messages"][-1]
@@ -51,13 +79,24 @@ def process_evidence_node(state: SubAgentInput):
         conclusion = last_message.content
         if isinstance(conclusion, str):
             conclusion = json.loads(conclusion)
-        files_searched = conclusion["files_searched"]
-        code_snippets = conclusion["code_snippets"]
-        description = conclusion["description"]
-        no_evidence_found = conclusion["no_evidence_found"]
+        evidence_items = conclusion.get("evidence_items", [])
+
+    normalized_items = []
+    for item in evidence_items:
+        if isinstance(item, EvidenceItem):
+            normalized_items.append(item.model_dump())
+        else:
+            normalized_items.append(item)
 
     evidence_results = []
-    for control in state["controls"]:
+    for index, control in enumerate(state["controls"]):
+        item = normalized_items[index] if index < len(normalized_items) else {}
+        files_searched = item.get("files_searched", []) or []
+        code_snippets = item.get("code_snippets", []) or []
+        description = item.get("description", "") or ""
+        no_evidence_found = item.get("no_evidence_found")
+        if no_evidence_found is None:
+            no_evidence_found = len(code_snippets) == 0
         evidence_results.append(
             EvidenceResult(
                 regulation_id=control["regulation_id"],
