@@ -14,6 +14,39 @@ router = APIRouter()
 CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 policy_service = PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
 
+
+def _format_stream_error(error: Exception) -> str:
+    raw_message = " ".join(str(error).split()).strip()
+    lowered_message = raw_message.lower()
+
+    if (
+        "rate limit" in lowered_message
+        or "too many requests" in lowered_message
+        or "429" in lowered_message
+        or "quota" in lowered_message
+    ):
+        return (
+            "Rate limit reached while running the compliance agent. "
+            "Please wait a moment and try again."
+        )
+
+    if "not found" in lowered_message and "repo" in lowered_message:
+        return (
+            "Repository not found or inaccessible. "
+            "Please verify the repository owner and name, then try again."
+        )
+
+    if "timed out" in lowered_message or "timeout" in lowered_message:
+        return (
+            "The compliance run timed out before completion. "
+            "Please try again in a moment."
+        )
+
+    if not raw_message:
+        return "The compliance agent failed unexpectedly. Please try again."
+
+    return f"Compliance agent failed: {raw_message}"
+
 class StreamRequest(BaseModel):
     framework: str
     category: str
@@ -81,27 +114,31 @@ async def stream_results(
             return value.model_dump()
         raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
+    def _normalize_custom_event(payload):
+        if isinstance(payload, dict) and isinstance(payload.get("type"), str):
+            return payload
+
+        return {
+            "type": "status",
+            "data": payload,
+        }
+
     async def event_generator():
-        async for mode, data in compliance_agent.astream(
-            initial_state, stream_mode=["custom", "updates"]
-        ):
-            
+        try:
+            async for mode, data in compliance_agent.astream(
+                initial_state, stream_mode=["custom", "updates"]
+            ):
+                if mode == "custom":
+                    yield f"data: {json.dumps(_normalize_custom_event(data), default=_json_default)}\n\n"
+                elif mode == "updates":
+                    yield f"data: {json.dumps({
+                        'type': 'update',
+                        'data': data
+                    }, default=_json_default)}\n\n"
 
-            if mode == "custom":
-                yield f"data: {json.dumps({
-                    'type': 'status',
-                    'data': data
-                }, default=_json_default)}\n\n"
-
-                
-            elif mode == "updates":
-                yield f"data: {json.dumps({
-                    'type': 'update',
-                    'data': data
-                }, default=_json_default)}\n\n"
-
-
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as error:
+            yield f"data: {json.dumps({'type': 'error', 'message': _format_stream_error(error)})}\n\n"
 
     return StreamingResponse(
         event_generator(),

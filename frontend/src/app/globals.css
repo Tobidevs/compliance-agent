@@ -65,3 +65,60 @@
     background-position: 100% 50%;
   }
 }
+
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-screen-enter {
+  animation: screen-enter 0.65s ease-out both;
+}
+
+@keyframes detail-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-detail-enter {
+  animation: detail-enter 0.35s ease-out both;
+}
+
+@keyframes progress-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.progress-indicator {
+  transform-origin: left center;
+  animation: progress-grow 0.75s ease-out both;
+}
+
+@keyframes ring-draw {
+  from {
+    stroke-dashoffset: var(--ring-length);
+  }
+  to {
+    stroke-dashoffset: var(--ring-offset);
+  }
+}
+
+.ring-progress {
+  animation: ring-draw 1s ease-out both;
+}

@@ -11,7 +11,7 @@ from .utils.github_mcp import GitHubMCPManager
 
 github_mcp_manager = GitHubMCPManager()
 
-model = init_chat_model(model="anthropic:claude-haiku-4-5")
+model = init_chat_model(model="openai:gpt-5.4-mini")
 llm = model.bind_tools(
     [
         github_mcp_manager.get_file_content,

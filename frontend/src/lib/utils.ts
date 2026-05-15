@@ -5,10 +5,33 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export type EvidenceRef = {
+  snippet: string;
+};
+
+export type ValidationFinding = {
+  type: "violation" | "pass" | "gap";
+  description: string;
+  evidence_ref?: EvidenceRef | null;
+  reasoning: string;
+};
+
+export type ControlValidation = {
+  regulation_id: string;
+  title: string;
+  status: "PASS" | "FAIL" | "PARTIAL" | "NO_EVIDENCE";
+  severity?: "critical" | "high" | "medium" | "low" | null;
+  confidence: number;
+  confidence_label: "High" | "Medium" | "Low" | "Inconclusive";
+  findings: ValidationFinding[];
+  overall_reasoning: string;
+};
+
 export type StreamEvent =
   | {
       type: "status";
-      message: string;
+      message?: string;
+      data?: string | { message?: string; type?: string };
     }
   | {
       type: "token";
@@ -16,11 +39,11 @@ export type StreamEvent =
     }
   | {
       type: "update";
-      data: any;
+      data: unknown;
     }
   | {
       type: "updates";
-      data: any;
+      data: unknown;
     }
   | {
       type: "done";

@@ -48,7 +48,7 @@ policy_service = PolicyRAGService(
 
 
 gpt_model = init_chat_model(
-    model="anthropic:claude-haiku-4-5"
+    model="openai:gpt-5.4-mini"
 )  # anthropic:claude-haiku-4-5
 policy_extraction_model = gpt_model.with_structured_output(PolicyExtractionResults)
 policy_validation_model = gpt_model.with_structured_output(PolicyValidationResults)
@@ -183,8 +183,8 @@ async def artifact_extractor_node(
         regulations.extend(
             regulation_service.query_regulations(
                 query=f"Retrieve {state['framework']} control requirements for category {category}. ",
-                top_k=3,
-                rerank_top_k=1,
+                top_k=10,
+                rerank_top_k=6,
                 namespace=state["framework"].lower(),
                 category=category,
             )
