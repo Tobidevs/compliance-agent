@@ -1,3 +1,5 @@
+import json
+
 from ..state import SubAgentInput
 
 
@@ -51,7 +53,7 @@ def _build_validation_user_message(state: SubAgentInput) -> str:
     Validate each control against its evidence. Use regulation_id as the sole
     identifier in your output — do not emit a separate control_id field.
 
-    {evidence}
+    {json.dumps(evidence, indent=2)}
 
     Assess all {control_count} controls and return a validation result
     for each one.

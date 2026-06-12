@@ -177,20 +177,29 @@ async def artifact_extractor_node(
         }
     )
 
-    for category in categories:
-        regulations.extend(
-            regulation_service.query_regulations(
-                query=f"Retrieve {state['framework']} control requirements for category {category}. ",
-                top_k=5,
-                rerank_top_k=1,
-                namespace=state["framework"].lower(),
-                category=category,
-            )
+    category_tasks = [
+        asyncio.to_thread(
+            regulation_service.query_regulations,
+            query=f"Retrieve {state['framework']} control requirements for category {category}. ",
+            top_k=5,
+            rerank_top_k=1,
+            namespace=state["framework"].lower(),
+            category=category,
         )
+        for category in categories
+    ]
 
-    file_paths = await github_mcp_manager.get_file_content(
-        owner=state["repo_owner"], repo=state["repo_name"], path=""
+    all_results = await asyncio.gather(
+        *category_tasks,
+        github_mcp_manager.get_file_content(
+            owner=state["repo_owner"], repo=state["repo_name"], path=""
+        ),
     )
+
+    file_paths = all_results[-1]
+    regulations = []
+    for reg_list in all_results[:-1]:
+        regulations.extend(reg_list)
 
     clusters = group_controls_into_clusters([reg.fields for reg in regulations])
 
@@ -245,7 +254,9 @@ def evidence_subagent_dispatch(
 def prepare_validation_subagents(state: ComplianceAgentState):
     evidence_items = _normalize_evidence_items(state.get("evidence_items", []))
     clusters = update_clusters_with_evidence(state.get("clusters", {}), evidence_items)
-    return {"evidence_items": evidence_items, "clusters": clusters}
+    # Do not return evidence_items: ComplianceAgentState.evidence_items uses operator.add,
+    # so returning the full list here would append it again, doubling every item.
+    return {"clusters": clusters}
 
 
 def validation_subagent_dispatch(

@@ -1,6 +1,8 @@
 
 from .state import EvidenceResult
 
+PRIORITY_PATH_CAP = 10
+
 
 def group_controls_into_clusters(
     regulations: list[dict],
