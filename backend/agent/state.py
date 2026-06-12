@@ -67,8 +67,8 @@ class EvidenceItem(BaseModel):
     no_evidence_found: bool = Field(
         description="True if no relevant evidence was found for this control."
     )
-    
-    
+
+
 class EvidenceRef(BaseModel):
     snippet: str = Field(
         description=(
@@ -76,6 +76,7 @@ class EvidenceRef(BaseModel):
             "Do not paraphrase."
         )
     )
+
 
 class ValidationFinding(BaseModel):
     type: Literal["violation", "pass", "gap"]
@@ -90,12 +91,10 @@ class ValidationFinding(BaseModel):
         ),
     )
     reasoning: str = Field(
-        default="",
-        description="Step-by-step reasoning for this individual finding."
+        default="", description="Step-by-step reasoning for this individual finding."
     )
 
 
-    
 class ControlValidation(BaseModel):
     regulation_id: str = Field(
         description="Regulation ID from the EvidenceResult (e.g. 'CC6.1.1')."
@@ -121,7 +120,6 @@ class ControlValidation(BaseModel):
             "Not a repeat of any single finding's reasoning."
         )
     )
-
 
 
 class ComplianceAgentState(TypedDict):
@@ -172,9 +170,6 @@ class SubAgentInput(TypedDict):
     repo_owner: str
     repo_name: str
     evidence_results: list[EvidenceResult]
-
-
-
 
 
 class ValidationBatch(BaseModel):

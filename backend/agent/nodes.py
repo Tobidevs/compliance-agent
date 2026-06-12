@@ -47,9 +47,7 @@ policy_service = PolicyRAGService(
 )
 
 
-gpt_model = init_chat_model(
-    model="openai:gpt-5.4-mini"
-)  # anthropic:claude-haiku-4-5
+gpt_model = init_chat_model(model="openai:gpt-5.4-mini")  # anthropic:claude-haiku-4-5
 policy_extraction_model = gpt_model.with_structured_output(PolicyExtractionResults)
 policy_validation_model = gpt_model.with_structured_output(PolicyValidationResults)
 compliance_validation_model = gpt_model.with_structured_output(ValidationBatch)
@@ -183,8 +181,8 @@ async def artifact_extractor_node(
         regulations.extend(
             regulation_service.query_regulations(
                 query=f"Retrieve {state['framework']} control requirements for category {category}. ",
-                top_k=10,
-                rerank_top_k=6,
+                top_k=5,
+                rerank_top_k=1,
                 namespace=state["framework"].lower(),
                 category=category,
             )
@@ -243,11 +241,12 @@ def evidence_subagent_dispatch(
 
     return sends
 
+
 def prepare_validation_subagents(state: ComplianceAgentState):
     evidence_items = _normalize_evidence_items(state.get("evidence_items", []))
     clusters = update_clusters_with_evidence(state.get("clusters", {}), evidence_items)
     return {"evidence_items": evidence_items, "clusters": clusters}
-    
+
 
 def validation_subagent_dispatch(
     state: ComplianceAgentState, config: RunnableConfig | None = None
@@ -261,7 +260,6 @@ def validation_subagent_dispatch(
     )
     clusters = state.get("clusters", {})
     evidence_items = state.get("evidence_items", [])
-
 
     sends = []
     for cluster_id, controls in clusters.items():
@@ -320,6 +318,7 @@ def invoke_validation_subagent(state, config: RunnableConfig | None = None):
     )
 
     return {"validation_results": validation_result.validations}
+
 
 def combine_validation_results(state: ComplianceAgentState):
     all_results: list = []

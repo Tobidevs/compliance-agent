@@ -22,10 +22,11 @@ def _build_evidence_user_message(state: SubAgentInput) -> str:
     {full_paths_block}
     """.strip()
 
+
 def _build_validation_user_message(state: SubAgentInput) -> str:
     framework = state.get("framework", "N/A")
     category = state.get("category", "N/A")
-    control_count = len(state.get("controls", [])) 
+    control_count = len(state.get("controls", []))
     evidence_results = state.get("evidence_items", [])
     evidence = [
         {
@@ -36,10 +37,10 @@ def _build_validation_user_message(state: SubAgentInput) -> str:
             "code_snippets": e.code_snippets,
             "description": e.description,
             "no_evidence_found": e.no_evidence_found,
-        } for e in evidence_results
+        }
+        for e in evidence_results
     ]
-    
-    
+
     return f"""Framework: {framework}
     Category: {category}
     Controls to validate: {control_count}
