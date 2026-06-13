@@ -1,124 +1,137 @@
 @import "tailwindcss";
 
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+/* ============================================================
+   Compliance Agent — refined design system
+   Theme preserved: white canvas, orange brand, IBM Plex.
+   Tokens systematized; a muted SEMANTIC status set added
+   (emerald / amber / brick / warm-gray) so good vs bad reads
+   instantly, plus *-vivid fills for charts, a warm ink scale,
+   one radius scale, and mono for technical metadata.
+   ============================================================ */
+
+:root {
+  /* --- Surfaces --- */
+  --paper: #ffffff;
+  --paper-2: #faf9f7;          /* warm off-white panel */
+  --paper-3: #f4f2ef;          /* deeper warm fill */
+
+  /* --- Warm ink scale (replaces scattered black/NN opacities) --- */
+  --ink: #1c1917;              /* primary text / headings */
+  --ink-2: #57534e;            /* body */
+  --ink-3: #79716b;            /* secondary / muted */
+  --ink-4: #a8a29e;            /* faint captions (large text only) */
+
+  /* --- Hairline borders --- */
+  --line: rgba(28, 25, 23, 0.09);
+  --line-2: rgba(28, 25, 23, 0.14);   /* interactive / emphasis */
+
+  /* --- Brand (unchanged hue: orange-500) --- */
+  --brand: #f97316;
+  --brand-600: #ea580c;
+  --brand-700: #c2410c;
+  --brand-50: #fff7ed;
+  --brand-100: #ffedd5;
+  --brand-line: rgba(249, 115, 22, 0.35);
+
+  /* --- Semantic status: readable text/border tones on light tints --- */
+  --pass: #2f7d63;            --pass-bg: #eef6f1;   --pass-line: rgba(47, 125, 99, 0.30);
+  --partial: #c2680c;         --partial-bg: #fdf2e3; --partial-line: rgba(194, 104, 12, 0.30);
+  --fail: #b23a2e;            --fail-bg: #fbeeec;   --fail-line: rgba(178, 58, 46, 0.30);
+  --noev: #8a8580;            --noev-bg: #f5f4f2;   --noev-line: rgba(138, 133, 128, 0.30);
+
+  /* Vivid fills for charts/graphics — saturated, still premium (not neon) */
+  --pass-vivid: #10a878;
+  --partial-vivid: #f59e0b;
+  --fail-vivid: #e5402f;
+  --noev-vivid: #a39c95;
+
+  /* --- Severity ramp (orange -> deep red, muted) --- */
+  --sev-critical: #9a2f28;
+  --sev-high: #c2410c;
+  --sev-medium: #e0762e;
+  --sev-low: #e8a87c;
+
+  /* --- Radius (one consistent scale) --- */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* --- Type (font variables injected by next/font in layout.tsx) --- */
+  --font-sans: var(--font-plex-sans, "IBM Plex Sans"), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono, "IBM Plex Mono"), ui-monospace, "SF Mono", monospace;
+
+  /* --- Elevation: barely-there, premium --- */
+  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow: 0 1px 3px rgba(28, 25, 23, 0.05), 0 8px 24px -12px rgba(28, 25, 23, 0.10);
+  --shadow-lg: 0 2px 6px rgba(28, 25, 23, 0.06), 0 24px 60px -28px rgba(28, 25, 23, 0.18);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* --- Reusable text roles --- */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--brand-600);
+}
+.eyebrow-muted {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mono { font-family: var(--font-mono); font-feature-settings: "tnum" 1; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+h1, h2, h3 { letter-spacing: -0.02em; color: var(--ink); margin: 0; }
+
+/* --- Focus ring (consistent across interactive elements) --- */
+.focusable:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[role="button"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px rgba(249, 115, 22, 0.55);
+  border-radius: var(--r-sm);
+}
+
+/* --- Animations (subtle, gated for reduced motion) --- */
+@keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ring-draw { from { stroke-dashoffset: var(--ring-len); } to { stroke-dashoffset: var(--ring-off); } }
+@keyframes step-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+.anim-fade-up { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-fade-up-2 { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both; }
+.anim-fade-in { animation: fade-in 0.3s ease-out both; }
+.anim-screen { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.ring-progress { animation: ring-draw 1s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.bar-grow { transform-origin: left center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-up, .anim-fade-up-2, .anim-fade-in, .anim-screen, .ring-progress {
+    animation-duration: 0.001s !important;
   }
 }
 
-.animate-fade-up {
-  animation: fade-up 0.6s ease-out both;
-}
-
-.animate-fade-up-delay {
-  animation: fade-up 0.6s ease-out 0.15s both;
-}
-
-@keyframes status-fade {
-  0% {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  35% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0.65;
-  }
-}
-
-.animate-status {
-  animation: status-fade 1.1s ease-in-out both;
-}
-
-.status-bar-track {
-  height: 6px;
-  width: 100%;
-  overflow: hidden;
-  border-radius: 9999px;
-  background: rgba(0, 0, 0, 0.07);
-}
-
-.status-bar-fill {
-  height: 100%;
-  width: 40%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #f97316, #fb923c, #f97316);
-  background-size: 200% 100%;
-  animation: status-bar-flow 1.4s linear infinite;
-  will-change: transform;
-}
-
-@keyframes status-bar-flow {
-  0% {
-    transform: translateX(-120%);
-    background-position: 0% 50%;
-  }
-  100% {
-    transform: translateX(220%);
-    background-position: 100% 50%;
-  }
-}
-
-@keyframes screen-enter {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-screen-enter {
-  animation: screen-enter 0.65s ease-out both;
-}
-
-@keyframes detail-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-detail-enter {
-  animation: detail-enter 0.35s ease-out both;
-}
-
-@keyframes progress-grow {
-  from {
-    transform: scaleX(0);
-  }
-  to {
-    transform: scaleX(1);
-  }
-}
-
-.progress-indicator {
-  transform-origin: left center;
-  animation: progress-grow 0.75s ease-out both;
-}
-
-@keyframes ring-draw {
-  from {
-    stroke-dashoffset: var(--ring-length);
-  }
-  to {
-    stroke-dashoffset: var(--ring-offset);
-  }
-}
-
-.ring-progress {
-  animation: ring-draw 1s ease-out both;
-}
+/* --- Quiet, premium scrollbars --- */
+.scroll-quiet::-webkit-scrollbar { width: 10px; height: 10px; }
+.scroll-quiet::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 999px; border: 3px solid var(--paper); }
+.scroll-quiet::-webkit-scrollbar-track { background: transparent; }
