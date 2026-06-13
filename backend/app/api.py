@@ -4,6 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import braintrust
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -124,21 +125,31 @@ async def stream_results(
         }
 
     async def event_generator():
-        try:
-            async for mode, data in compliance_agent.astream(
-                initial_state, stream_mode=["custom", "updates"]
-            ):
-                if mode == "custom":
-                    yield f"data: {json.dumps(_normalize_custom_event(data), default=_json_default)}\n\n"
-                elif mode == "updates":
-                    yield f"data: {json.dumps({
-                        'type': 'update',
-                        'data': data
-                    }, default=_json_default)}\n\n"
+        with braintrust.start_span(
+            name="compliance_run",
+            input={
+                "framework": initial_state["framework"],
+                "category": initial_state["category"],
+                "repo": f"{initial_state['repo_owner']}/{initial_state['repo_name']}",
+            },
+        ) as span:
+            try:
+                async for mode, data in compliance_agent.astream(
+                    initial_state, stream_mode=["custom", "updates"]
+                ):
+                    if mode == "custom":
+                        yield f"data: {json.dumps(_normalize_custom_event(data), default=_json_default)}\n\n"
+                    elif mode == "updates":
+                        yield f"data: {json.dumps({
+                            'type': 'update',
+                            'data': data
+                        }, default=_json_default)}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as error:
-            yield f"data: {json.dumps({'type': 'error', 'message': _format_stream_error(error)})}\n\n"
+                span.log(output={"status": "completed"})
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            except Exception as error:
+                span.log(output={"status": "error", "message": str(error)})
+                yield f"data: {json.dumps({'type': 'error', 'message': _format_stream_error(error)})}\n\n"
 
     return StreamingResponse(
         event_generator(),
