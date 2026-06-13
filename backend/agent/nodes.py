@@ -185,8 +185,8 @@ async def artifact_extractor_node(
         asyncio.to_thread(
             regulation_service.query_regulations,
             query=f"Retrieve {state['framework']} control requirements for category {category}. ",
-            top_k=5,
-            rerank_top_k=1,
+            top_k=10,
+            rerank_top_k=4,
             namespace=state["framework"].lower(),
             category=category,
         )

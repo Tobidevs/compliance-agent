@@ -1,16 +1,17 @@
 from dotenv import load_dotenv
+from braintrust import init_logger
+from braintrust_langchain import BraintrustCallbackHandler, set_global_handler
+import os
 
-load_dotenv()  # must run before braintrust init so BRAINTRUST_API_KEY is in env
-
-import braintrust
-
-braintrust.init_logger(project="compliance-agent")
-braintrust.auto_instrument()
-
-# Agent module imports happen after auto_instrument() so LLM clients are patched
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .api import router as api_router
+load_dotenv()
+
+init_logger(project="Compliance Agent", api_key=os.environ["BRAINTRUST_API_KEY"])
+handler = BraintrustCallbackHandler()
+set_global_handler(handler)
+
 
 app = FastAPI(title="Compliance Agent API")
 
