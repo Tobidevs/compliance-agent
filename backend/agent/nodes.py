@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from typing import Literal
+import braintrust
 from langchain_pinecone._utilities import cosine_similarity
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -66,6 +67,7 @@ def _normalize_evidence_items(raw_items: list) -> list[EvidenceResult]:
     return normalized
 
 
+@braintrust.traced(name="extraction")
 async def extraction_node(state: ComplianceAgentState):
 
     regulation_query = f"Retrieve {state['framework']} control requirements for category {state['category']}. "
@@ -98,6 +100,7 @@ async def extraction_node(state: ComplianceAgentState):
     return {"regulations": formatted_regulations, "policies": formatted_policies}
 
 
+@braintrust.traced(name="policy_validation")
 async def policy_validator_node(state: ComplianceAgentState):
 
     extracted_policies = policy_extraction_model.invoke(
@@ -160,6 +163,7 @@ async def invoke_evidence_subagent(state, config: RunnableConfig | None = None):
     return {"evidence_items": normalized_items}
 
 
+@braintrust.traced(name="artifact_extraction")
 async def artifact_extractor_node(
     state: ComplianceAgentState, config: RunnableConfig | None = None
 ):
@@ -304,6 +308,7 @@ def validation_subagent_dispatch(
     return sends
 
 
+@braintrust.traced(name="validation_subagent")
 def invoke_validation_subagent(state, config: RunnableConfig | None = None):
     raw_response = compliance_validation_model.invoke(state["messages"])
     if isinstance(raw_response, ValidationBatch):

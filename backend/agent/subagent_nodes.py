@@ -1,4 +1,5 @@
 import json
+import braintrust
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -22,6 +23,7 @@ llm = model.bind_tools(
 )
 
 
+@braintrust.traced(name="gather_evidence")
 def gather_evidence_node(state: SubAgentInput):
     writer = get_stream_writer()
 
@@ -54,6 +56,7 @@ def is_finished(state: SubAgentInput):
     return "gather_evidence"
 
 
+@braintrust.traced(name="process_evidence")
 def process_evidence_node(state: SubAgentInput):
     writer = get_stream_writer()
 
