@@ -1,19 +1,21 @@
-from langchain.tools import tool
-
-from .state import EvidenceItem
+from .state import EvidenceResult
 
 
-def conclude_evidence(evidence_items: list[EvidenceItem]):
-    """Call this ONCE you have completed ALL searching and evidence gathering for ALL controls. This signals that your evidence gathering process is finished and triggers the final output assembly."""
+def conclude_evidence(evidence_result: EvidenceResult):
+    """Call this after completing evidence gathering for one control. This records that control's evidence result, then you should continue to the next assigned control."""
 
-    normalized_items = []
-    for item in evidence_items:
-        if isinstance(item, EvidenceItem):
-            normalized_items.append(item.model_dump())
-        else:
-            normalized_items.append(item)
+    if isinstance(evidence_result, EvidenceResult):
+        normalized_result = evidence_result.model_dump()
+    else:
+        normalized_result = evidence_result
 
-    return {"evidence_items": normalized_items}
+    return {"evidence_result": normalized_result}
+
+
+def finished_gathering_evidence():
+    """Call this only after every assigned control has been completed with conclude_evidence."""
+
+    return {"status": "finished"}
 
 
 def think(
@@ -34,7 +36,7 @@ def think(
                 secure, insecure, adequate, inadequate.
         code_snippets: Exact verbatim code from the file relevant to the current control.
                         Preserve whitespace. Empty list if nothing relevant was found.
-        finished: A boolean flag indicating whether the evidence gathering process for ALL controls is complete.
+        finished: A boolean flag indicating whether the current control is ready to conclude.
         fetches_remaining: An integer indicating how many more file fetches are allowed before concluding.
         tree_calls_remaining: An integer indicating how many more repository tree calls are allowed before concluding.
     """

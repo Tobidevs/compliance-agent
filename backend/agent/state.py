@@ -62,7 +62,7 @@ class EvidenceItem(BaseModel):
         description="Verbatim code snippets relevant to this control."
     )
     description: str = Field(
-        description="Factual description of what the evidence shows."
+        description="Plain-language summary of what the evidence shows for a client."
     )
     no_evidence_found: bool = Field(
         description="True if no relevant evidence was found for this control."
@@ -116,8 +116,8 @@ class ControlValidation(BaseModel):
     )
     overall_reasoning: str = Field(
         description=(
-            "Synthesis across all findings justifying the final status. "
-            "Not a repeat of any single finding's reasoning."
+            "Client-facing plain-language summary of the final status. "
+            "Explain what was checked, what was found, and the main gap or support."
         )
     )
 
@@ -169,7 +169,7 @@ class SubAgentInput(TypedDict):
     priority_paths: list[str]  # pre-filtered high-relevance paths for this cluster
     repo_owner: str
     repo_name: str
-    evidence_results: list[EvidenceResult]
+    evidence_results: Annotated[list[EvidenceResult], operator.add]
 
 
 class ValidationBatch(BaseModel):

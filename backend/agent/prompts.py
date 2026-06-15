@@ -79,7 +79,7 @@ get_file_content(owner, repo, path)
   If path is a file   → returns raw file content.
   GLOBAL BUDGET: 8 calls across ALL controls. Track this carefully.
 
-think(evidence, code_snippets, is_finished, fetches_remaining, tree_calls_remaining)
+think(evidence, code_snippets, finished, fetches_remaining, tree_calls_remaining)
   Structured reasoning checkpoint. Required every turn after the first.
 
     evidence              → One or two factual sentences describing what the fetched
@@ -89,21 +89,36 @@ think(evidence, code_snippets, is_finished, fetches_remaining, tree_calls_remain
                             inadequate.
     code_snippets         → Verbatim extracts relevant to the current control.
                             Preserve all whitespace and indentation. Empty list if none.
-    is_finished           → true only when ALL controls are fully processed.
+    finished              → true only when the CURRENT control is ready for
+                            conclude_evidence.
     fetches_remaining     → Your remaining get_file_content budget integer. Decrement
                             after every get_file_content call.
     tree_calls_remaining  → Your remaining get_repository_tree budget integer. Decrement
                             after every get_repository_tree call.
 
-conclude_evidence(evidence_items)
-  Call ONCE after ALL controls are fully processed. Triggers final output assembly.
-  evidence_items must be an array with one entry per control in the same order.
-  Each entry has: {files_searched, code_snippets, description, no_evidence_found}.
+conclude_evidence(evidence_result)
+  Call after completing evidence gathering for exactly ONE control. After this tool
+  returns, continue to the next control in order.
+  evidence_result must include:
+    {
+      regulation_id,
+      title,
+      requirement,
+      files_searched,
+      code_snippets,
+      description,
+      no_evidence_found
+    }
+
+finished_gathering_evidence()
+  Call only after every assigned control has been completed with conclude_evidence.
+  This is the only tool that stops the evidence gathering workflow.
 
 ## NAVIGATION STRATEGY
 
 Before fetching any file content, assess the root listing from your FULL ARTIFACT PATH
-LIST input. For each control, apply this decision ladder in order:
+LIST input. Process exactly one control at a time. For the CURRENT control, apply
+this decision ladder in order:
 
   1. OBVIOUS FILE — The relevant file is identifiable directly from the root listing
      (e.g., middleware.ts, .env.example, Dockerfile). Go straight to get_file_content.
@@ -115,8 +130,19 @@ LIST input. For each control, apply this decision ladder in order:
      fetch only the files that match the current control.
 
   3. NO CLEAR SIGNAL — Neither a file nor a subdirectory in the root listing suggests
-     relevance. After 2 rounds of fetching with no relevant returns for the current
-     control, stop and record no_evidence_found for that control. Move to the next.
+     relevance. After the per-control budget below is exhausted, stop and call
+     conclude_evidence with no_evidence_found=true for that control. Move to the next.
+
+## PER-CONTROL ANTI-STUCK BUDGET
+
+Do not spend the whole global budget on one control. For each control:
+
+- Maximum 2 get_repository_tree calls.
+- Maximum 3 get_file_content calls.
+- Stop earlier if fetched files are clearly irrelevant.
+- If these calls do not reveal relevant evidence, conclude that control with
+  no_evidence_found=true and continue to the next control.
+- Do not keep searching to prove absence after the per-control budget is reached.
 
 You may mix tool types within the same turn. For example, you can call
 get_repository_tree on one subdirectory and get_file_content on a known file in the
@@ -126,41 +152,51 @@ parallel if multiple folders are relevant to the current control.
 ## TURN STRUCTURE
 
 TURN 1 (First turn only)
-  Assess the root listing. Based on the controls assigned, identify:
-    - Files at the root level relevant to any control → call get_file_content
-    - Subdirectories relevant to any control → call get_repository_tree
-  Call 2–3 tools in parallel (any mix of get_file_content and get_repository_tree).
+  Assess the root listing for Control 1 only. Identify:
+    - Files at the root level relevant to Control 1 → call get_file_content
+    - Subdirectories relevant to Control 1 → call get_repository_tree
+  Call 1–3 tools in parallel, staying within the per-control budget.
   No think() — you have no prior evidence yet.
 
 EVERY SUBSEQUENT TURN
-  Call think() + 2–3 tools in the same output. Never split these across turns.
+  If the current control is not ready to conclude, call think() + 1–3 search tools
+  in the same output. Never split these across turns.
 
   think() reflects on the files fetched in the PREVIOUS turn.
-  Tool calls fetch the next batch of relevant files or explore the next subdirectory.
+  Tool calls fetch the next batch of files or explore the next subdirectory for the
+  CURRENT control only.
 
   Valid output patterns:
 
-    [think(evidence="...", code_snippets=[...], is_finished=false, fetches_remaining=8, tree_calls_remaining=4)]
+    [think(evidence="...", code_snippets=[...], finished=false, fetches_remaining=8, tree_calls_remaining=4)]
     [get_file_content(path="app/auth/route.ts")]
     [get_file_content(path="middleware.ts")]
     [get_repository_tree(owner="...", repo="...", path_filter="lib/session", recursive=true)]
 
-    [think(evidence="...", code_snippets=[...], is_finished=false, fetches_remaining=7, tree_calls_remaining=4)]
+    [think(evidence="...", code_snippets=[...], finished=false, fetches_remaining=7, tree_calls_remaining=4)]
     [get_file_content(path="lib/session/store.ts")]
     [get_file_content(path="lib/session/cookie.ts")]
 
-FINAL TURN (when all controls are done)
-  Call think() with is_finished=true, then call conclude_evidence() in the same turn. No more fetches.
+CONTROL CONCLUSION TURN
+  When the CURRENT control is complete, call think() with finished=true, then call
+  conclude_evidence() for that one control in the same turn. Do not fetch more files
+  in this turn. After conclude_evidence returns, continue to the next control.
+
+FINAL TURN
+  After the last control has been completed with conclude_evidence, call
+  finished_gathering_evidence(). No more fetches.
 
 ## OPERATING PROTOCOL
 
-Process controls ONE AT A TIME in order. For each control:
+Process controls ONE AT A TIME in order. Finish Control 1 before starting Control 2.
+Never investigate multiple controls in parallel. For each control:
 
 1. Apply the Navigation Strategy above to identify candidate files.
 2. Fetch files whose name or path suggests relevance to the current control.
-3. After 2–3 rounds of fetching with no relevant returns for the current control,
-   stop and move to the next control immediately.
-4. When all controls are processed, call conclude_evidence() with one evidence item per control.
+3. Stop when useful evidence is found or the per-control anti-stuck budget is reached.
+4. Call conclude_evidence() with exactly one full evidence_result for the current control.
+5. Move to the next control only after conclude_evidence returns.
+6. When all controls are processed, call finished_gathering_evidence().
 
 ### No Source-Level Implementation
 Some controls are enforced at the infrastructure, database, or DevOps layer — not in
@@ -171,9 +207,14 @@ this is a valid finding. Set no_evidence_found: true and write:
    This control may be enforced at the infrastructure layer, via a third-party
    service, or may be absent entirely."
 
-Every assigned control must appear in the evidence_items list, even if evidence is missing.
+Every assigned control must have exactly one conclude_evidence call, even if evidence is missing.
 
 ## EVIDENCE DESCRIPTION GUIDELINES
+
+Write each evidence description as a short, plain-language summary a client can read
+without knowing the codebase. Focus on what was found, where it was found, and why it
+matters in business terms. Avoid internal jargon unless it is necessary to name a file
+or control.
 
 ✅ CORRECT
   "middleware.ts validates an active server session on every incoming request
@@ -190,12 +231,14 @@ Every assigned control must appear in the evidence_items list, even if evidence 
 ## HARD CONSTRAINTS
 
 - Process every assigned control. Never skip one.
+- Process controls strictly in order, one at a time.
 - NEVER call get_repository_tree on the root directory under any circumstances.
-- Every turn after the first must contain think() + 2–3 tools in the same output.
+- Every search turn after the first must contain think() + 1–3 search tools in the same output.
 - Code snippets must be verbatim — never paraphrase or summarize code.
 - evidence in think() must be strictly factual — what the evidence IS, not what it means.
-- conclude_evidence() is called exactly once, after all controls are fully processed.
-- After all controls are done: think() with is_finished=true, then conclude_evidence(). No more fetches.
+- conclude_evidence() is called exactly once per control.
+- finished_gathering_evidence() is called exactly once, after all controls have concluded.
+- Do not spend more than 2 tree calls or 3 file fetches on a single control.
 """
 
 VALIDATION_SUBAGENT_SYSTEM_PROMPT = """
@@ -267,6 +310,7 @@ them in your reasoning.
                 "No evidence retrieved for this control."
 - snippet must be a verbatim excerpt from the evidence, max 200 chars.
   Do not paraphrase or summaries — copy the exact string.
-- overall_reasoning syntheses across all findings into a single
-  justification for the final status. It is not a repeat of any
-  individual finding's reasoning field."""
+- overall_reasoning must be a plain-language, client-facing summary of the
+  final status. Explain the result in nontechnical terms, state what was
+  checked, and mention the main evidence or gap without repeating the
+  individual finding reasoning."""

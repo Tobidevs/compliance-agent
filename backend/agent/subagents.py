@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, START, END
 from .state import SubAgentInput
 from langgraph.prebuilt import ToolNode
 
-from .tools import conclude_evidence, think
+from .tools import conclude_evidence, finished_gathering_evidence, think
 from .subagent_nodes import (
     gather_evidence_node,
     github_mcp_manager,
@@ -20,6 +20,7 @@ evidence_subagent_builder.add_node(
             github_mcp_manager.get_file_content,
             github_mcp_manager.get_repository_tree,
             conclude_evidence,
+            finished_gathering_evidence,
             think,
         ]
     ),
