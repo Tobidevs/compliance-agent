@@ -9,6 +9,7 @@ from .subagent_nodes import (
     is_finished,
     process_evidence_node,
 )
+from .utils.github_mcp import format_github_mcp_tool_error
 
 evidence_subagent_builder = StateGraph(SubAgentInput)
 
@@ -22,7 +23,8 @@ evidence_subagent_builder.add_node(
             conclude_evidence,
             finished_gathering_evidence,
             think,
-        ]
+        ],
+        handle_tool_errors=format_github_mcp_tool_error,
     ),
 )
 evidence_subagent_builder.add_node("process_evidence", process_evidence_node)

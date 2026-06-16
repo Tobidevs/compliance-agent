@@ -69,6 +69,34 @@ def _normalize_evidence_items(raw_items: list) -> list[EvidenceResult]:
     return normalized
 
 
+def _build_missing_evidence_items(
+    state,
+    completed_items: list[EvidenceResult],
+    reason: str,
+) -> list[EvidenceResult]:
+    completed_ids = {item.regulation_id for item in completed_items}
+    missing_items: list[EvidenceResult] = []
+
+    for control in state.get("controls", []):
+        regulation_id = control.get("regulation_id", "")
+        if regulation_id in completed_ids:
+            continue
+
+        missing_items.append(
+            EvidenceResult(
+                regulation_id=regulation_id,
+                title=control.get("title", ""),
+                requirement=control.get("requirement", ""),
+                files_searched=[],
+                code_snippets=[],
+                description=reason,
+                no_evidence_found=True,
+            )
+        )
+
+    return missing_items
+
+
 @braintrust.traced(name="extraction")
 async def extraction_node(state: ComplianceAgentState):
 
@@ -149,19 +177,51 @@ async def policy_validator_node(state: ComplianceAgentState):
 
 async def invoke_evidence_subagent(state, config: RunnableConfig | None = None):
     base_config = config or {}
-    evidence_result = await evidence_subagent.ainvoke(
-        state,
-        config={
-            **base_config,
-            "name": f"invoked_evidence_subagent_{state['cluster_id']}",
-        },
-    )
+    writer = get_stream_writer()
 
-    evidence_items = evidence_result.get("evidence_results", [])
-    if not isinstance(evidence_items, list):
-        evidence_items = [evidence_items]
+    try:
+        evidence_result = await evidence_subagent.ainvoke(
+            state,
+            config={
+                **base_config,
+                "name": f"invoked_evidence_subagent_{state['cluster_id']}",
+            },
+        )
 
-    normalized_items = _normalize_evidence_items(evidence_items)
+        evidence_items = evidence_result.get("evidence_results", [])
+        if not isinstance(evidence_items, list):
+            evidence_items = [evidence_items]
+
+        normalized_items = _normalize_evidence_items(evidence_items)
+        missing_items = _build_missing_evidence_items(
+            state,
+            normalized_items,
+            (
+                "Evidence gathering ended before this control was completed. "
+                "No source-level evidence was recorded for this control."
+            ),
+        )
+        normalized_items.extend(missing_items)
+    except Exception as error:
+        writer(
+            {
+                "type": "status",
+                "message": (
+                    f"Evidence gathering for cluster {state.get('cluster_id', '')} "
+                    "hit a tool error. Returning partial no-evidence results."
+                ),
+            }
+        )
+        normalized_items = _build_missing_evidence_items(
+            state,
+            [],
+            (
+                "Evidence gathering could not complete because the GitHub evidence "
+                f"tool failed: {' '.join(str(error).split())}. No source-level "
+                "evidence was recorded for this control."
+            ),
+        )
+
     return {"evidence_items": normalized_items}
 
 

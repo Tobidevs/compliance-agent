@@ -79,6 +79,11 @@ get_file_content(owner, repo, path)
   If path is a file   → returns raw file content.
   GLOBAL BUDGET: 8 calls across ALL controls. Track this carefully.
 
+If a GitHub tool result says it failed, was rate-limited, or exhausted retries,
+do not keep calling GitHub tools for the same control. Treat the current control
+as no source-level evidence found, call conclude_evidence with no_evidence_found=true,
+and continue to the next assigned control.
+
 think(evidence, code_snippets, finished, fetches_remaining, tree_calls_remaining)
   Structured reasoning checkpoint. Required every turn after the first.
 
@@ -239,6 +244,8 @@ or control.
 - conclude_evidence() is called exactly once per control.
 - finished_gathering_evidence() is called exactly once, after all controls have concluded.
 - Do not spend more than 2 tree calls or 3 file fetches on a single control.
+- If GitHub tools return rate-limit or retry-exhausted errors, stop searching that
+  control and conclude no_evidence_found=true instead of retrying from the model.
 """
 
 VALIDATION_SUBAGENT_SYSTEM_PROMPT = """
