@@ -2,11 +2,13 @@
 Budget Adherence Rate evaluation for the compliance pipeline's evidence subagent.
 
 This eval is scoped to the EVIDENCE-GATHERING stage only. For each case it:
-  1. Runs artifact extraction (retrieve controls + the repo root file listing).
-  2. Groups controls into clusters and emits one experiment row per cluster.
-  3. Runs exactly one evidence subagent for that cluster (invoking the compiled
-     evidence_subagent subgraph directly so execution STOPS at evidence gathering
-     and never proceeds to compliance validation).
+  1. Fetches the repo root file listing and retrieves the controls for one SOC 2
+     category from the vector DB (grouped by the specified category).
+  2. Emits one experiment row per category, mirroring the real workflow's dispatch
+     of one evidence subagent per category.
+  3. Runs exactly one evidence subagent for that category's control set (invoking the
+     compiled evidence_subagent subgraph directly so execution STOPS at evidence
+     gathering and never proceeds to compliance validation).
   4. Grades the subagent's full message transcript with a single LLM-judge choice
      scorer (`BudgetAdherence`) that emits one of 0.0 / 0.3 / 0.5 / 0.7 / 1.0.
 
@@ -27,7 +29,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.prompts import EVIDENCE_SUBAGENT_SYSTEM_PROMPT
 from agent.subagents import evidence_subagent
-from agent.clusters import group_controls_into_clusters
 from agent.utils.agent_utils import _build_evidence_user_message
 from agent.utils.regulation_rag_service import RegulationRAGService
 from agent.utils.github_mcp import GitHubMCPManager
@@ -38,26 +39,24 @@ load_dotenv()
 TREE_BUDGET = 5  # get_repository_tree calls across all controls
 FILE_BUDGET = 8  # get_file_content calls across all controls
 
-# Hardcoded eval cases. Each (repo, framework, category) is expanded into one
-# experiment row per resulting control cluster. Extend this list to broaden coverage.
+# How many controls to retrieve per category from the vector DB (the actual workflow's
+# artifact_extractor_node uses top_k=10 with rerank_top_k=4).
+CONTROL_TOP_K = 10
+CONTROL_RERANK_TOP_K = 4
+
+# Hardcoded eval cases. Each repo declares the SOC 2 categories (control families) to
+# scan, mirroring `source_code_categories` in the real workflow. Every category is
+# expanded into one experiment row (= one evidence subagent). Extend to broaden coverage.
 EVAL_REPOS = [
     {
         "repo_owner": "acmuta",
         "repo_name": "mavresume",
         "framework": "soc2-source-code",
-        "category": "Identity & Access Management",
-    },
-    {
-        "repo_owner": "acmuta",
-        "repo_name": "mavresume",
-        "framework": "soc2-source-code",
-        "category": "Logging & Monitoring",
-    },
-    {
-        "repo_owner": "acmuta",
-        "repo_name": "mavresume",
-        "framework": "soc2-source-code",
-        "category": "Data Protection & Privacy",
+        "source_code_categories": [
+            "Identity & Access Management",
+            "Logging & Monitoring",
+            "Data Protection & Privacy",
+        ],
     },
 ]
 
@@ -66,44 +65,54 @@ github_mcp_manager = GitHubMCPManager()
 
 
 # ---------------------------------------------------------------------------
-# Dataset generation: extraction -> clusters -> one EvalCase per cluster
+# Dataset generation: per-category control retrieval -> one EvalCase per category
 # ---------------------------------------------------------------------------
-async def _extract_clusters(repo_owner, repo_name, framework, category):
-    """Mirror artifact_extractor_node's core (nodes.py) without the graph runtime."""
-    regulations, artifact_paths = await asyncio.gather(
-        asyncio.to_thread(
-            regulation_service.query_regulations,
-            query=f"Retrieve {framework} control requirements for category {category}. ",
-            top_k=10,
-            rerank_top_k=4,
-            namespace=framework.lower(),
-            category=category,
-        ),
-        github_mcp_manager.get_file_content(
-            owner=repo_owner, repo=repo_name, path=""
-        ),
-    )
+def _controls_from_regulations(regulations) -> list[dict]:
+    """Map retrieved regulation records to the control shape the subagent consumes."""
+    return [
+        {
+            "regulation_id": reg.fields["control_id"],
+            "title": reg.fields["title"],
+            "requirement": reg.fields["requirement"],
+        }
+        for reg in regulations
+    ]
 
-    clusters = group_controls_into_clusters([reg.fields for reg in regulations])
-    return clusters, artifact_paths
+
+async def _retrieve_controls_for_category(framework, category):
+    """Pull the n controls for one category from the vector DB (specified-category
+    grouping — the queried category defines the group, matching the real workflow)."""
+    regulations = await asyncio.to_thread(
+        regulation_service.query_regulations,
+        query=f"Retrieve {framework} control requirements for category {category}. ",
+        top_k=CONTROL_TOP_K,
+        rerank_top_k=CONTROL_RERANK_TOP_K,
+        namespace=framework.lower(),
+        category=category,
+    )
+    return _controls_from_regulations(regulations)
 
 
 async def build_dataset():
-    """Async generator yielding one EvalCase per non-empty cluster.
+    """Async generator yielding one EvalCase per category (= one evidence subagent).
+
+    For each repo we fetch the root artifact listing once, then retrieve each
+    category's controls and route that whole set to a single evidence subagent —
+    exactly how the real workflow dispatches one subagent per category.
 
     Implemented as an async generator (not a coroutine returning a list) because the
     Braintrust CLI imports and runs the eval inside its own event loop and consumes
     `data` via `inspect.isasyncgen`.
     """
     for repo in EVAL_REPOS:
-        clusters, artifact_paths = await _extract_clusters(
-            repo["repo_owner"],
-            repo["repo_name"],
-            repo["framework"],
-            repo["category"],
+        framework = repo["framework"]
+        # Root file listing — fetched once per repo, shared across that repo's categories.
+        artifact_paths = await github_mcp_manager.get_file_content(
+            owner=repo["repo_owner"], repo=repo["repo_name"], path=""
         )
 
-        for cluster_id, controls in clusters.items():
+        for category in repo["source_code_categories"]:
+            controls = await _retrieve_controls_for_category(framework, category)
             if not controls:
                 continue
 
@@ -111,17 +120,15 @@ async def build_dataset():
                 input={
                     "repo_owner": repo["repo_owner"],
                     "repo_name": repo["repo_name"],
-                    "framework": repo["framework"],
-                    "category": repo["category"],
-                    "cluster_id": cluster_id,
+                    "framework": framework,
+                    "category": category,
                     "controls": controls,
                     "artifact_paths": artifact_paths,
                 },
                 metadata={
-                    "cluster_id": cluster_id,
+                    "category": category,
                     "num_controls": len(controls),
-                    "framework": repo["framework"],
-                    "category": repo["category"],
+                    "framework": framework,
                     "repo": f"{repo['repo_owner']}/{repo['repo_name']}",
                     "tree_budget": TREE_BUDGET,
                     "file_budget": FILE_BUDGET,
@@ -130,7 +137,7 @@ async def build_dataset():
 
 
 # ---------------------------------------------------------------------------
-# Task: run ONE evidence subagent for the cluster, then stop
+# Task: run ONE evidence subagent for the category, then stop
 # ---------------------------------------------------------------------------
 def _serialize_tool_calls(tool_calls) -> str:
     lines = []
@@ -174,7 +181,10 @@ def serialize_transcript(messages) -> str:
 
 async def task(input) -> str:
     sub_input = {
-        "cluster_id": input["cluster_id"],
+        # The subagent's SubAgentInput / _build_evidence_user_message expect a
+        # `cluster_id` field; in the real workflow it holds the category string, so we
+        # pass the category here to mirror that exactly.
+        "cluster_id": input["category"],
         "controls": input["controls"],
         "artifact_paths": input["artifact_paths"],
         "repo_owner": input["repo_owner"],
