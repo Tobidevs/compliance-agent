@@ -18,7 +18,7 @@ function ResultsHeader({
   framework: string; category: string; repoOwner: string; repoName: string; scopeCount: number;
 }) {
   const meta = [
-    { k: "Framework", v: framework === "soc2-source-code" ? "SOC 2 · Source Code" : (framework || "SOC 2") },
+    { k: "Framework", v: framework === "SOC2&GDPR" ? "SOC 2 & GDPR" : (framework || "SOC 2") },
     { k: "Repository", v: repoOwner && repoName ? `${repoOwner}/${repoName}` : "—" },
     { k: "Category", v: category || "Not specified" },
     { k: "Scope", v: scopeCount ? `${scopeCount} families` : "—" },
