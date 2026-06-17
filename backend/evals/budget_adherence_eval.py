@@ -54,8 +54,6 @@ EVAL_REPOS = [
         "framework": "soc2-source-code",
         "source_code_categories": [
             "Identity & Access Management",
-            "Logging & Monitoring",
-            "Data Protection & Privacy",
         ],
     },
 ]
@@ -290,7 +288,7 @@ budget_adherence = LLMClassifier(
 # Eval declaration
 # ---------------------------------------------------------------------------
 Eval(
-    "Compliance Agent - Evidence Budget Adherence",
+    "Compliance Agent",
     data=build_dataset,
     task=task,
     scores=[budget_adherence],
