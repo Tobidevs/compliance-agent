@@ -26,7 +26,7 @@ from .state import (
     PolicyValidationResults,
     ValidationBatch,
 )
-from .utils.regulation_rag_service import RegulationRAGService
+from .utils.regulation_rag_service import RegulationRAGService, REGULATION_NAMESPACE
 from .utils.policy_rag_service import PolicyRAGService
 from .utils.github_mcp import GitHubMCPManager
 from .utils.agent_utils import (
@@ -82,7 +82,7 @@ async def extraction_node(state: ComplianceAgentState):
         regulation_service.query_regulations,
         query=regulation_query,
         top_k=5,
-        namespace=state["framework"].lower(),
+        namespace=REGULATION_NAMESPACE,
         category=state["category"],
     )
     policy_task = asyncio.to_thread(
@@ -189,7 +189,7 @@ async def artifact_extractor_node(
             query=f"Retrieve {state['framework']} control requirements for category {category}. ",
             top_k=10,
             rerank_top_k=4,
-            namespace=state["framework"].lower(),
+            namespace=REGULATION_NAMESPACE,
             category=category,
         )
         for category in categories

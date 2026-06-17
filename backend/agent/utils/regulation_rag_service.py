@@ -7,9 +7,15 @@ from ..core.pinecone_client import PineconeClient
 
 load_dotenv()
 
+# Single source of truth for the combined SOC 2 + GDPR control namespace. Shared by both
+# the ingestion script (agent/scripts/data_ingestion.py) and retrieval so the index name
+# stays in lockstep. Decoupled from the free-text `framework` label, which is now only
+# used to build the semantic query string.
+REGULATION_NAMESPACE = "SOC2&GDPR"
+
 
 class RegulationRAGService:
-    def __init__(self, index: str, namespace: str = "soc2-policy-doc", pc: Pinecone | None = None):
+    def __init__(self, index: str, namespace: str = REGULATION_NAMESPACE, pc: Pinecone | None = None):
         self.pc = pc or Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         self.vector_store = PineconeClient(index_name=index, pc=self.pc)
         self.namespace = namespace
@@ -61,12 +67,18 @@ class RegulationRAGService:
                         "control_id": result.fields["control_id"],
                         "category": result.fields["category"],
                         "title": result.fields["title"],
-                        "requirement": result.fields["requirement"],
+                        # `criterion_text` / `testing_approach` are the v3 index field
+                        # names; we map them back to the stable internal keys the rest of
+                        # the pipeline consumes (requirement / testing_criteria).
+                        "requirement": result.fields["criterion_text"],
+                        "points_of_focus": result.fields["points_of_focus"],
+                        "source_code_relevance": result.fields["source_code_relevance"],
                         "policy_assertion": (result.fields["policy_assertion"] if "policy_assertion" in result.fields else None),
                         "keywords": result.fields["keywords"],
                         "artifact_types": result.fields["artifact_types"],
-                        "testing_criteria": result.fields["testing_criteria"],
-                        "evidence_indicator": result.fields["evidence_indicator"],
+                        "testing_criteria": result.fields["testing_approach"],
+                        "evidence_indicator": result.fields["evidence_indicators"],
+                        "source_code_signal": result.fields["source_code_signal"],
                         "severity": result.fields["severity"]
                     }
                 )

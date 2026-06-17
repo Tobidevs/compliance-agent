@@ -57,7 +57,7 @@ async def run_compliance_agent(framework: str, categories: list[str]):
 
 async def main():
     await run_compliance_agent(
-        framework="soc2-source-code", categories=["Identity & Access Management"]
+        framework="SOC2&GDPR", categories=["Identity & Access Management"] # todo - update catagories
     )
     print("Run completed successfully.")
 
