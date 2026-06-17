@@ -132,13 +132,17 @@ function ScopeRow({ label, checked, onToggle }: { label: string; checked: boolea
 /* ============================================================
    IntakeScreen — ledger-style document form
    ============================================================ */
-const FRAMEWORKS = ["soc2-source-code"];
+const FRAMEWORKS = ["SOC2&GDPR"];
 const CATEGORIES = ["Category A", "Category B", "Category C"];
+// Must match the `category` values in the SOC2&GDPR v3 control set exactly: the backend
+// filters retrieval with `category $eq`, so a mismatch returns zero controls.
 const SCOPE_OPTIONS = [
-  "Change Management & SDLC", "Identity & Access Management", "Data Protection & Privacy",
-  "Processing Integrity", "Network & Systems Security", "Logging & Monitoring", "Operations & Incident Management",
+  "Logical and Physical Access Controls", "System Operations", "Change Management",
+  "Risk Mitigation", "Availability", "Processing Integrity", "Data Processing Principles",
+  "Privacy by Design and Default", "Security of Processing", "Data Subject Rights",
+  "Breach Notification", "PII Handling and Logging",
 ];
-const fmtFramework = (v: string) => (v === "soc2-source-code" ? "SOC 2 · Source Code" : v);
+const fmtFramework = (v: string) => (v === "SOC2&GDPR" ? "SOC 2 & GDPR" : v);
 
 function SectionHead({ n, title, desc }: { n: string; title: string; desc: string }) {
   return (
@@ -169,7 +173,7 @@ export function IntakeScreen({
     <div style={{ maxWidth: 880, margin: "0 auto", padding: "8px 0 64px" }}>
       <div className="anim-fade-up" style={{ textAlign: "center", maxWidth: 560, margin: "0 auto" }}>
         <p className="eyebrow">Compliance Validation</p>
-        <h1 style={{ fontSize: 38, fontWeight: 600, marginTop: 16, lineHeight: 1.08 }}>Validate a repository<br />against SOC 2 controls</h1>
+        <h1 style={{ fontSize: 38, fontWeight: 600, marginTop: 16, lineHeight: 1.08 }}>Validate a repository<br />against SOC 2 &amp; GDPR controls</h1>
         <p style={{ fontSize: 15.5, lineHeight: 1.6, color: "var(--ink-3)", marginTop: 16 }}>
           Point the agent at a source repository and choose the control families in scope. We map the evidence, validate each control, and score readiness.
         </p>
