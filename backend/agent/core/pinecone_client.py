@@ -55,7 +55,7 @@ class PineconeClient:
                 "model": "bge-reranker-v2-m3",
                 "query": query,
                 "top_n": rerank_top_k,
-                "rank_fields": ["requirement"],
+                "rank_fields": ["criterion_text"],
             },
         )
         

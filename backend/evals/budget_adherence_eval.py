@@ -30,7 +30,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from agent.prompts import EVIDENCE_SUBAGENT_SYSTEM_PROMPT
 from agent.subagents import evidence_subagent
 from agent.utils.agent_utils import _build_evidence_user_message
-from agent.utils.regulation_rag_service import RegulationRAGService
+from agent.utils.regulation_rag_service import RegulationRAGService, REGULATION_NAMESPACE
 from agent.utils.github_mcp import GitHubMCPManager
 
 load_dotenv()
@@ -51,7 +51,7 @@ EVAL_REPOS = [
     {
         "repo_owner": "acmuta",
         "repo_name": "mavresume",
-        "framework": "soc2-source-code",
+        "framework": "SOC2&GDPR",
         "source_code_categories": [
             "Identity & Access Management",
         ],
@@ -71,7 +71,7 @@ def _controls_from_regulations(regulations) -> list[dict]:
         {
             "regulation_id": reg.fields["control_id"],
             "title": reg.fields["title"],
-            "requirement": reg.fields["requirement"],
+            "requirement": reg.fields["criterion_text"],
         }
         for reg in regulations
     ]
@@ -85,7 +85,7 @@ async def _retrieve_controls_for_category(framework, category):
         query=f"Retrieve {framework} control requirements for category {category}. ",
         top_k=CONTROL_TOP_K,
         rerank_top_k=CONTROL_RERANK_TOP_K,
-        namespace=framework.lower(),
+        namespace=REGULATION_NAMESPACE,
         category=category,
     )
     return _controls_from_regulations(regulations)
