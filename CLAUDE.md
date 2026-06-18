@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A full-stack compliance validation application that uses a LangGraph multi-agent workflow to assess whether a GitHub repository meets regulatory/compliance controls (e.g., SOC 2, ISO 27001). The backend drives an LLM agent pipeline; the frontend streams real-time results.
+A full-stack compliance validation application that uses a LangGraph multi-agent workflow to assess whether a GitHub repository meets regulatory/compliance controls. The active control library combines the **SOC 2** and **GDPR** frameworks (surfaced in the UI as "SOC 2 & GDPR"). The backend drives an LLM agent pipeline; the frontend streams real-time results over SSE.
 
 ## Development Commands
 
@@ -12,87 +12,64 @@ A full-stack compliance validation application that uses a LangGraph multi-agent
 
 ```bash
 cd backend
-
-# Activate virtual environment
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run development server (port 8000)
-uvicorn app.main:app --reload --port 8000
-
-# Health check
-curl http://localhost:8000/api/health
+source .venv/bin/activate            # activate virtualenv
+pip install -r requirements.txt      # install deps
+uvicorn app.main:app --reload --port 8000   # dev server
+curl http://localhost:8000/api/health        # health check
+python agent/scripts/data_ingestion.py        # (re)seed the control corpus — see below
 ```
 
 ### Frontend (Next.js)
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Run development server (port 3000)
-npm run dev
-
-# Build for production
-npm run build
-
-# Lint
+npm run dev      # dev server on :3000
+npm run build    # production build
 npm run lint
 ```
 
 ### Environment
 
 Backend requires `backend/.env` with:
-- `OPENAI_API_KEY` — GPT-4o mini for extraction/validation
-- `ANTHROPIC_API_KEY` — Claude for subagents
-- `PINECONE_API_KEY` — vector reranking
+- `OPENAI_API_KEY` — GPT model for policy extraction/validation
+- `ANTHROPIC_API_KEY` — Claude (Haiku/Sonnet) for sub-agents
+- `PINECONE_API_KEY` — hybrid vector search + reranking of the control corpus
 - `GITHUB_PERSONAL_ACCESS_TOKEN` — code retrieval via MCP
-- `LANGSMITH_API_KEY` / `LANGSMITH_ENDPOINT` — LangGraph tracing
-- `CHROMA_PERSIST_DIR` — vector DB path (default: `./chroma_db`)
+- `LANGSMITH_API_KEY` / `LANGSMITH_ENDPOINT` — tracing
+- `CHROMA_PERSIST_DIR` — local Chroma path for policy-document RAG (default: `./chroma_db`)
 
 Frontend reads `NEXT_PUBLIC_API_BASE_URL` (defaults to `http://127.0.0.1:8000`).
 
 ## Architecture
 
+### Control corpus (recently refactored)
+
+The regulation control library lives in **Pinecone** (index `compliance-frameworks`, namespace `SOC2&GDPR`), seeded from `agent/scripts/SOC2_GDPR_Controls_v3.csv` by `agent/scripts/data_ingestion.py`. The CSV uses v3 field names — `criterion_text` (embedded), `testing_approach`, plus `points_of_focus`, `source_code_relevance`, `source_code_signal`. `format_regulation_results` maps those back to stable internal keys (`requirement`, `testing_criteria`, `evidence_indicator`) so downstream code is unaffected.
+
+`REGULATION_NAMESPACE = "SOC2&GDPR"` in `utils/regulation_rag_service.py` is the single source of truth, imported by both ingestion and retrieval and decoupled from the free-text `framework` label. Retrieval filters by `filter={"category": {"$eq": category}}`, so **frontend scope strings must exactly match the CSV `category` values** (the 12 categories: Logical and Physical Access Controls, System Operations, Change Management, Risk Mitigation, Availability, Processing Integrity, Data Processing Principles, Privacy by Design and Default, Security of Processing, Data Subject Rights, Breach Notification, PII Handling and Logging).
+
 ### Backend Agent Pipeline (`backend/agent/`)
 
-The core is a **LangGraph graph** defined in `agent.py`. Execution flows through these nodes (defined in `nodes.py`):
+The core is a **LangGraph graph** in `agent.py`; nodes live in `nodes.py`. The active path is `START → artifact_extraction → … → END` (the `extraction`/`policy_validation` nodes exist but their edges are commented out). Flow:
 
-1. **`artifact_extraction`** — fetches source code files from the target GitHub repo using the GitHub MCP tool (`utils/github_mcp.py`)
-2. **`evidence_subagent_dispatch`** → **`evidence_subagent`** — fans out subagents per control cluster to search code/policies for evidence; results accumulated into `ComplianceAgentState.evidence`
-3. **`prepare_validation_subagents`** → **`validation_subagent_dispatch`** → **`validation_subagent`** — validates each control against gathered evidence, producing a `ControlValidation` per control
-4. **`combine_validation_results`** — aggregates all `ControlValidation` objects into the final output
+1. **`artifact_extraction`** (`artifact_extractor_node`) — concurrently (a) retrieves controls from Pinecone for each requested `source_code_categories` entry and (b) lists the target repo's files via GitHub MCP (`utils/github_mcp.py`). Retrieved controls are grouped into **clusters keyed by `category`** (`clusters.group_controls_into_clusters`).
+2. **`evidence_subagent_dispatch` → `evidence_subagent`** — a conditional edge fans out one `Send` **per cluster**; each runs the evidence sub-agent (`subagents.py`, a small `StateGraph` of gather → conclude using tools in `tools.py`) to search code/policies. Results accumulate into `evidence_items` (an `operator.add` reducer — never re-return the full list, or items double).
+3. **`prepare_validation_subagents`** merges evidence back into clusters (`update_clusters_with_evidence`), then **`validation_subagent_dispatch` → `validation_subagent`** fans out per cluster again, scoping evidence by `regulation_id` and producing a `ValidationBatch` of `ControlValidation`s (structured output from Sonnet).
+4. **`combine_validation_results`** — flattens all batches into the final `validation_results`.
 
-State between nodes flows through `ComplianceAgentState` (a `TypedDict` in `state.py`). Key fields: `framework`, `regulations`, `policies`, `source_code`, `evidence`, `validation_results`, `clusters`.
-
-Policy documents (PDFs) are chunked and stored in **Chroma** (local) and retrieved via `utils/policy_rag_service.py`. Pinecone is used for reranking retrieved chunks.
+State flows through `ComplianceAgentState` (`state.py`). Key fields: `framework`, `category`, `source_code_categories`, `regulations`, `clusters`, `artifact_paths`, `evidence_items`, `validation_results`. Models are tiered in `nodes.py`: GPT for policy steps, Haiku for cheap extraction, Sonnet for final validation. Nodes emit live progress via `get_stream_writer()` (`status`/`updates` events).
 
 ### API Layer (`backend/app/`)
 
-- `main.py` — FastAPI app setup, CORS (allows `localhost:3000`)
-- `api.py` — three routes:
-  - `POST /api/upload-policy` — ingest PDF into Chroma
-  - `POST /api/stream` — run compliance workflow, returns **SSE stream** with event types: `status`, `token`, `update`, `error`, `done`
-  - `GET /api/health`
+- `main.py` — FastAPI app + CORS (allows `localhost:3000`).
+- `api.py` — routes: `POST /api/upload-policy` (ingest PDF into Chroma), `POST /api/stream` (run workflow, **SSE** with `status`/`token`/`update`/`error`/`done` events), `GET /api/health`. Note: the singular `category` in the request is overridden with `source_code_categories[0]`, so the pipeline is driven by the scope list, not the single dropdown.
 
-### Frontend (`frontend/src/app/page.tsx`)
+### Frontend (`frontend/src/`)
 
-Single large component (~1400 lines) that:
-- Renders the compliance run form (framework, category, repo details, source code scope)
-- Connects to the SSE `/api/stream` endpoint and updates state incrementally
-- Displays results as donut charts, severity mix, confidence rings, a filterable control explorer, and a detail panel with reasoning/evidence
-- Uses Radix UI headless components from `src/components/ui/`
+`app/page.tsx` orchestrates the run; UI is split into `components/compliance/` (`screens.tsx` = intake form with `FRAMEWORKS`/`SCOPE_OPTIONS`, `results.tsx`, `charts.tsx`, `primitives.tsx`, `Icon.tsx`). It connects to the SSE `/api/stream` endpoint, updates incrementally, and renders donut charts, severity mix, confidence rings, a filterable control explorer, and a reasoning/evidence detail panel. `SCOPE_OPTIONS` must stay in sync with the CSV categories above. See `frontend/AGENTS.md` — this is a non-standard Next.js; read `node_modules/next/dist/docs/` before using Next.js APIs.
 
-### Key Type Definitions (`backend/agent/state.py`)
+### Key Types & Tools
 
-- `ComplianceAgentState` — full graph state
-- `ControlValidation` — per-control result: `status` (pass/fail/partial/error), `severity`, `confidence`, `findings`, `evidence_snippets`
-- `EvidenceResult` — evidence gathered per control cluster
-
-### Subagent / Tool Design (`backend/agent/subagents.py`, `tools.py`, `prompts.py`)
-
-Subagents are spawned with dedicated system prompts from `prompts.py`. Tools available to subagents are defined in `tools.py` and include GitHub search, Chroma RAG search, and policy lookup. Clustering logic for grouping related controls lives in `clusters.py`.
+- `state.py` — `ComplianceAgentState`; `ControlValidation` (`status` pass/fail/partial/error, `severity`, `confidence`, `findings`, `evidence_snippets`); `EvidenceResult`.
+- `prompts.py` — sub-agent system prompts. `tools.py` — `think`, `conclude_evidence`, `finished_gathering_evidence` plus GitHub/RAG search. `clusters.py` — grouping + evidence merge logic.
