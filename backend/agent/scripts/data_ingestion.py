@@ -29,24 +29,55 @@ if not pc.has_index(index_name):
 index = pc.Index(index_name)
 
 
+def _humanize(value) -> str:
+    """Turn a pipe-delimited CSV cell into readable prose for embedding."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return ", ".join(part.strip() for part in str(value).split("|") if part.strip())
+
+
+def build_embedding_text(row: dict) -> str:
+    """
+    Compose the natural-language "control document" that actually gets embedded.
+    """
+    parts = [
+        f"Category: {row['category']}.",
+        f"Control: {row['title']} ({row['control_id']}, {row['framework']}).",
+        f"Requirement: {row['criterion_text']}",
+    ]
+    pof = _humanize(row.get("points_of_focus"))
+    if pof:
+        parts.append(f"Points of focus: {pof}.")
+    keywords = _humanize(row.get("keywords"))
+    if keywords:
+        parts.append(f"Keywords: {keywords}.")
+    scr = str(row.get("source_code_relevance") or "").strip()
+    if scr:
+        parts.append(f"Implementation signals: {scr}")
+    return " ".join(parts)
+
+
 def ingest_compliance_data(file_path: str):
     df = pd.read_csv(file_path)
 
+    rows = df.to_dict(orient="records")
+    embedding_texts = [build_embedding_text(row) for row in rows]
+
     dense_embeddings = pc.inference.embed(
         model="llama-text-embed-v2",
-        inputs=[row["criterion_text"] for _, row in df.iterrows()],
+        inputs=embedding_texts,
         parameters={"input_type": "passage", "truncate": "END"},
     )
 
     sparse_embeddings = pc.inference.embed(
         model="pinecone-sparse-english-v0",
-        inputs=[row["criterion_text"] for _, row in df.iterrows()],
+        inputs=embedding_texts,
         parameters={"input_type": "passage", "truncate": "END"},
     )
 
     records = []
-    for d, de, se in zip(
-        df.to_dict(orient="records"), dense_embeddings, sparse_embeddings
+    for d, embedding_text, de, se in zip(
+        rows, embedding_texts, dense_embeddings, sparse_embeddings
     ):
         records.append(
             {
@@ -71,6 +102,7 @@ def ingest_compliance_data(file_path: str):
                     "testing_approach": d["testing_approach"],
                     "source_code_signal": d["source_code_signal"],
                     "severity": d["severity"],
+                    "embedding_text": embedding_text,
                 },
             }
         )

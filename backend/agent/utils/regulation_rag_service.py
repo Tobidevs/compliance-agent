@@ -20,6 +20,48 @@ class RegulationRAGService:
         self.vector_store = PineconeClient(index_name=index, pc=self.pc)
         self.namespace = namespace
 
+    def _embed_query(self, query: str):
+        """Embed a query string for hybrid (dense + sparse) search."""
+        dense = self.pc.inference.embed(
+            model="llama-text-embed-v2",
+            inputs=query,
+            parameters={"input_type": "query", "truncate": "END"},
+        )
+        sparse = self.pc.inference.embed(
+            model="pinecone-sparse-english-v0",
+            inputs=query,
+            parameters={"input_type": "query", "truncate": "END"},
+        )
+        return dense[0], sparse[0]
+
+    def get_controls_for_categories(
+        self,
+        categories: list[str] | str,
+        namespace: str | None = None,
+    ):
+        """
+        Return *every* control belonging to the given category/categories.
+
+        This is the primary path used by the pipeline: the caller already knows
+        which categories it wants, so selection is a metadata filter.
+        """
+        if isinstance(categories, str):
+            categories = [categories]
+
+        ns = namespace or self.namespace
+        results = []
+        for category in categories:
+            dense, sparse = self._embed_query(category)
+            hits = self.vector_store.fetch_by_filter(
+                namespace=ns,
+                vector=dense["values"],
+                sparse_values=sparse["sparse_values"],
+                sparse_indices=sparse["sparse_indices"],
+                filter={"category": {"$eq": category}},
+            )
+            results.extend(hits)
+        return results
+
     def query_regulations(
         self,
         query: str,
@@ -28,34 +70,24 @@ class RegulationRAGService:
         rerank_top_k: int = 5,
         category: str | None = None,
     ):
-        dense_query_embedding = self.pc.inference.embed(
-            model="llama-text-embed-v2",
-            inputs=query,
-            parameters={"input_type": "query", "truncate": "END"},
+        """
+        Free-text semantic search over controls. Use this when the selection is
+        driven by content (a concept, a repo description) rather than a known
+        category — for category-scoped retrieval prefer
+        `get_controls_for_categories`, which is exhaustive.
+        """
+        dense, sparse = self._embed_query(query)
+
+        return self.vector_store.query(
+            namespace=namespace or self.namespace,
+            query=query,
+            top_k=top_k,
+            rerank_top_k=rerank_top_k,
+            vector=dense["values"],
+            sparse_values=sparse["sparse_values"],
+            sparse_indices=sparse["sparse_indices"],
+            filter={"category": {"$eq": category}} if category else None,
         )
-
-        sparse_query_embedding = self.pc.inference.embed(
-            model="pinecone-sparse-english-v0",
-            inputs=query,
-            parameters={"input_type": "query", "truncate": "END"},
-        )
-
-        results = []
-        for d, s in zip(dense_query_embedding, sparse_query_embedding):
-            query_response = self.vector_store.query(
-                namespace=namespace or self.namespace,
-                query=query,
-                top_k=top_k,
-                rerank_top_k=rerank_top_k,
-                vector=d["values"],
-                sparse_values=s["sparse_values"],
-                sparse_indices=s["sparse_indices"],
-                filter={"category": {"$eq": category}} if category else None,
-            )
-            results.extend(query_response)
-            
-
-        return results
 
     def format_regulation_results(self, results):
         formatted_results = []

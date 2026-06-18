@@ -72,18 +72,15 @@ def _normalize_evidence_items(raw_items: list) -> list[EvidenceResult]:
 @braintrust.traced(name="extraction")
 async def extraction_node(state: ComplianceAgentState):
 
-    regulation_query = f"Retrieve {state['framework']} control requirements for category {state['category']}. "
     policy_query = (
         f"Retrieve compliance policies relevant to {state['framework']}"
         f"and category {state['category']}."
     )
 
     regulation_task = asyncio.to_thread(
-        regulation_service.query_regulations,
-        query=regulation_query,
-        top_k=5,
+        regulation_service.get_controls_for_categories,
+        categories=state["category"],
         namespace=REGULATION_NAMESPACE,
-        category=state["category"],
     )
     policy_task = asyncio.to_thread(
         policy_service.query_policies,
@@ -183,29 +180,20 @@ async def artifact_extractor_node(
         }
     )
 
-    category_tasks = [
-        asyncio.to_thread(
-            regulation_service.query_regulations,
-            query=f"Retrieve {state['framework']} control requirements for category {category}. ",
-            top_k=10,
-            rerank_top_k=4,
-            namespace=REGULATION_NAMESPACE,
-            category=category,
-        )
-        for category in categories
-    ]
+    regulation_task = asyncio.to_thread(
+        regulation_service.get_controls_for_categories,
+        categories=categories,
+        namespace=REGULATION_NAMESPACE,
+    )
 
-    all_results = await asyncio.gather(
-        *category_tasks,
+    regulation_hits, file_paths = await asyncio.gather(
+        regulation_task,
         github_mcp_manager.get_file_content(
             owner=state["repo_owner"], repo=state["repo_name"], path=""
         ),
     )
 
-    file_paths = all_results[-1]
-    regulations = []
-    for reg_list in all_results[:-1]:
-        regulations.extend(reg_list)
+    regulations = list(regulation_hits)
 
     clusters = group_controls_into_clusters([reg.fields for reg in regulations])
 
