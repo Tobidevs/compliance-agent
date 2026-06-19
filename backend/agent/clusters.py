@@ -18,7 +18,8 @@ def group_controls_into_clusters(
         control = {
             "regulation_id": reg_id,
             "title": reg.get("title", ""),
-            "requirement": reg.get("requirement", ""),
+            "requirement": reg.get("requirement") or reg.get("criterion_text", ""),
+            "points_of_focus": reg.get("points_of_focus", ""),
         }
         result[reg.get("category", "misc")] = result.get(reg.get("category", "misc"), []) + [control]
         

@@ -3,13 +3,34 @@ import json
 from ..state import SubAgentInput
 
 
+def _format_points_of_focus(raw) -> str:
+    """Turn the raw pipe-delimited points_of_focus cell into a readable bullet list."""
+    if not raw:
+        return ""
+    parts = [p.strip() for p in str(raw).split("|") if p.strip()]
+    return "\n".join(f"      - {p}" for p in parts)
+
+
+def _build_control_block(c: dict) -> str:
+    block = (
+        f"Regulation {c['regulation_id']}: {c['title']}\n"
+        f"Requirement: {c['requirement']}"
+    )
+    points_of_focus = _format_points_of_focus(c.get("points_of_focus"))
+    if points_of_focus:
+        block += (
+            "\nPoints of focus — search context, NOT a checklist. Together these describe "
+            "what a complete implementation of this control looks like. Use them to guide "
+            "WHAT you search for in a single unified search for this control; do not run a "
+            "separate search per item:\n"
+            f"{points_of_focus}"
+        )
+    return block
+
+
 def _build_evidence_user_message(state: SubAgentInput) -> str:
     controls_block = "\n\n".join(
-        [
-            f"Regulation {c['regulation_id']}: {c['title']}\n"
-            f"Requirement: {c['requirement']}\n"
-            for c in state["controls"]
-        ]
+        _build_control_block(c) for c in state["controls"]
     )
 
     full_paths_block = "\n".join(f"  - {p}" for p in state["artifact_paths"])
@@ -17,7 +38,7 @@ def _build_evidence_user_message(state: SubAgentInput) -> str:
     return f"""REPOSITORY: {state["repo_owner"]}/{state["repo_name"]}
     CLUSTER: {state["cluster_id"]}
 
-    SOC 2 CONTROLS TO INVESTIGATE:
+    COMPLIANCE CONTROLS TO INVESTIGATE:
     {controls_block}
 
     FULL ARTIFACT PATH LIST — root directory files and folders in the repo.

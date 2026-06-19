@@ -44,6 +44,15 @@ class PolicyValidationResults(BaseModel):
     results: list[PolicyValidationResult] = Field(default_factory=list)
 
 
+class PointOfFocusCoverage(BaseModel):
+    point_of_focus: str = Field(
+        description="The control's point of focus being assessed."
+    )
+    coverage: Literal["satisfied", "partial", "absent"] = Field(
+        description="Whether gathered evidence shows this point of focus is satisfied, partially covered, or absent."
+    )
+
+
 class EvidenceResult(BaseModel):
     regulation_id: str
     title: str
@@ -52,6 +61,9 @@ class EvidenceResult(BaseModel):
     code_snippets: list[str]
     description: str
     no_evidence_found: bool
+    points_of_focus_coverage: list[PointOfFocusCoverage] = Field(
+        description="One entry per point of focus for this control. Empty if the control lists no points of focus."
+    )
 
 
 class EvidenceItem(BaseModel):

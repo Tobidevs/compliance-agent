@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Working Conventions
 
 - **Do not use git worktrees.** Make any file changes directly in the current working directory. Only use a worktree if I explicitly ask for one. (Background-session worktree isolation is disabled for this repo via `.claude/settings.json` → `"worktree": {"bgIsolation": "none"}`.)
+- **Do not add verbose comments.** Make one line comments unless absolutely necessary.
 
 ## Project Overview
 
