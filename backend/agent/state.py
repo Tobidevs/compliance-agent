@@ -107,6 +107,23 @@ class ValidationFinding(BaseModel):
     )
 
 
+class PointOfFocusAssessment(BaseModel):
+    point_of_focus: str = Field(
+        description="The point-of-focus statement being assessed, verbatim."
+    )
+    status: Literal["satisfied", "partial", "absent", "not_applicable"] = Field(
+        description=(
+            "Validator's judged coverage for this point of focus: satisfied, partial, "
+            "absent, or not_applicable when it is enforced outside the codebase "
+            "(infrastructure, DevOps, or a third-party service) so its absence from "
+            "source is not a deficiency."
+        )
+    )
+    assessment: str = Field(
+        description="Concise, evidence-grounded reason for the assigned status."
+    )
+
+
 class ControlValidation(BaseModel):
     regulation_id: str = Field(
         description="Regulation ID from the EvidenceResult (e.g. 'CC6.1.1')."
@@ -125,6 +142,9 @@ class ControlValidation(BaseModel):
     findings: list[ValidationFinding] = Field(
         min_length=1,
         description="At least one finding required per control.",
+    )
+    points_of_focus: list[PointOfFocusAssessment] = Field(
+        description="One assessment per point of focus for this control. Empty if the control lists none.",
     )
     overall_reasoning: str = Field(
         description=(

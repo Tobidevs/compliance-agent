@@ -56,6 +56,10 @@ def _build_validation_user_message(state: SubAgentInput) -> str:
             "regulation_id": e.regulation_id,
             "title": e.title,
             "requirement": e.requirement,
+            "points_of_focus_coverage": [
+                {"point_of_focus": p.point_of_focus, "coverage": p.coverage}
+                for p in e.points_of_focus_coverage
+            ],
             "files_searched": e.files_searched,
             "code_snippets": e.code_snippets,
             "description": e.description,

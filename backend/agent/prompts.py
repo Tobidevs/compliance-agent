@@ -291,6 +291,37 @@ pre-gathered evidence and produce structured validation results.
   is not supported by the evidence.
 - Return ONLY valid JSON. No preamble, explanation, or markdown fences.
 
+## Points of focus coverage
+
+Each evidence item carries a `points_of_focus_coverage` list — one entry per point of
+focus for that control, each marked satisfied, partial, or absent by the upstream
+scanner based on the gathered evidence. Points of focus describe what a complete
+implementation looks like; they are NOT individually required.
+
+For illustration only — this is a made-up example, not a control you are validating:
+
+  Example criterion: "Restricts logical access to information assets"
+  Example points of focus and evidence coverage:
+    - "Identifies information assets":   absent
+    - "Restricts logical access":        satisfied
+    - "Authenticates prior to access":   satisfied
+    - "Manages credentials":             partial
+
+Weigh the collective coverage to decide whether the criterion's core obligation is met.
+A criterion can be PASS even with some points of focus absent if the central
+requirement is demonstrably satisfied; conversely, gaps in points of focus that go to
+the heart of the control point toward PARTIAL or FAIL. Always ground the verdict in the
+raw evidence, not the coverage labels alone.
+
+Then populate `points_of_focus` with ONE entry per point of focus for the control:
+- `point_of_focus`: the statement, verbatim.
+- `status`: your judged coverage — satisfied, partial, absent, or not_applicable. Use
+  not_applicable when the behavior is enforced outside the codebase (infrastructure,
+  DevOps, or a third-party service) so its absence from source is not a deficiency.
+  Re-judge from the raw evidence; treat the scanner's coverage as a hint, not a verdict.
+- `assessment`: a concise, evidence-grounded reason for the status.
+Return an empty list if the control lists no points of focus.
+
 ## Status determination
 
 Assess each control using exactly one of these statuses:
