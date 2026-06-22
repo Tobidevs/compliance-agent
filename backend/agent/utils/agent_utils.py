@@ -18,13 +18,7 @@ def _build_control_block(c: dict) -> str:
     )
     points_of_focus = _format_points_of_focus(c.get("points_of_focus"))
     if points_of_focus:
-        block += (
-            "\nPoints of focus — search context, NOT a checklist. Together these describe "
-            "what a complete implementation of this control looks like. Use them to guide "
-            "WHAT you search for in a single unified search for this control; do not run a "
-            "separate search per item:\n"
-            f"{points_of_focus}"
-        )
+        block += f"\nPoints of Focus:\n{points_of_focus}"
     return block
 
 

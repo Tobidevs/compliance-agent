@@ -49,11 +49,11 @@ CONTROL_RERANK_TOP_K = 4
 # expanded into one experiment row (= one evidence subagent). Extend to broaden coverage.
 EVAL_REPOS = [
     {
-        "repo_owner": "acmuta",
-        "repo_name": "mavresume",
+        "repo_owner": "ixartz",
+        "repo_name": "SaaS-Boilerplate",
         "framework": "SOC2&GDPR",
         "source_code_categories": [
-            "Identity & Access Management",
+            "Logical and Physical Access Controls",
         ],
     },
 ]
