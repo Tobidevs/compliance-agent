@@ -1,6 +1,8 @@
 import json
+import os
 import braintrust
 
+from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langgraph.config import get_stream_writer
 
@@ -9,10 +11,15 @@ from .tools import conclude_evidence, finished_gathering_evidence, think
 from .state import EvidenceResult, SubAgentInput
 from .utils.github_mcp import GitHubMCPManager
 
+load_dotenv()
+
 github_mcp_manager = GitHubMCPManager()
 
-haiku_model = init_chat_model(model="anthropic:claude-haiku-4-5")
-llm = haiku_model.bind_tools(
+# Swap providers via env, e.g. EVIDENCE_SUBAGENT_MODEL="openai:gpt-5.4-mini".
+evidence_model = init_chat_model(
+    model=os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5")
+)
+llm = evidence_model.bind_tools(
     [
         github_mcp_manager.get_file_content,
         github_mcp_manager.get_repository_tree,

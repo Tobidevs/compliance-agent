@@ -1,31 +1,32 @@
 @import "tailwindcss";
 
 /* ============================================================
-   Compliance Agent — refined design system
-   Theme preserved: white canvas, orange brand, IBM Plex.
-   Tokens systematized; a muted SEMANTIC status set added
-   (emerald / amber / brick / warm-gray) so good vs bad reads
-   instantly, plus *-vivid fills for charts, a warm ink scale,
-   one radius scale, and mono for technical metadata.
+   Compliance Agent — Command Center design system
+   Theme preserved: warm white canvas, orange brand, IBM Plex.
+   Light tokens carried over from the original app; a full dark
+   theme + sidebar (app-shell) tokens added for the dashboard
+   layout. Status set: emerald / amber / brick / warm-gray with
+   *-vivid fills for charts.
    ============================================================ */
 
 :root {
   /* --- Surfaces --- */
   --paper: #ffffff;
-  --paper-2: #faf9f7;          /* warm off-white panel */
-  --paper-3: #f4f2ef;          /* deeper warm fill */
+  --paper-2: #faf9f7;
+  --paper-3: #f1efec;
+  --paper-4: #e9e6e1;
 
-  /* --- Warm ink scale (replaces scattered black/NN opacities) --- */
-  --ink: #1c1917;              /* primary text / headings */
-  --ink-2: #57534e;            /* body */
-  --ink-3: #79716b;            /* secondary / muted */
-  --ink-4: #a8a29e;            /* faint captions (large text only) */
+  /* --- Warm ink scale --- */
+  --ink: #1c1917;
+  --ink-2: #57534e;
+  --ink-3: #79716b;
+  --ink-4: #a8a29e;
 
   /* --- Hairline borders --- */
   --line: rgba(28, 25, 23, 0.09);
-  --line-2: rgba(28, 25, 23, 0.14);   /* interactive / emphasis */
+  --line-2: rgba(28, 25, 23, 0.15);
 
-  /* --- Brand (unchanged hue: orange-500) --- */
+  /* --- Brand (orange-500) --- */
   --brand: #f97316;
   --brand-600: #ea580c;
   --brand-700: #c2410c;
@@ -33,39 +34,93 @@
   --brand-100: #ffedd5;
   --brand-line: rgba(249, 115, 22, 0.35);
 
-  /* --- Semantic status: readable text/border tones on light tints --- */
-  --pass: #2f7d63;            --pass-bg: #eef6f1;   --pass-line: rgba(47, 125, 99, 0.30);
-  --partial: #c2680c;         --partial-bg: #fdf2e3; --partial-line: rgba(194, 104, 12, 0.30);
-  --fail: #b23a2e;            --fail-bg: #fbeeec;   --fail-line: rgba(178, 58, 46, 0.30);
-  --noev: #8a8580;            --noev-bg: #f5f4f2;   --noev-line: rgba(138, 133, 128, 0.30);
+  /* --- Semantic status --- */
+  --pass: #2f7d63;    --pass-bg: #eef6f1;    --pass-line: rgba(47, 125, 99, 0.30);
+  --partial: #c2680c; --partial-bg: #fdf2e3; --partial-line: rgba(194, 104, 12, 0.30);
+  --fail: #b23a2e;    --fail-bg: #fbeeec;    --fail-line: rgba(178, 58, 46, 0.30);
+  --noev: #8a8580;    --noev-bg: #f5f4f2;    --noev-line: rgba(138, 133, 128, 0.30);
 
-  /* Vivid fills for charts/graphics — saturated, still premium (not neon) */
+  /* Vivid chart fills */
   --pass-vivid: #10a878;
   --partial-vivid: #f59e0b;
   --fail-vivid: #e5402f;
   --noev-vivid: #a39c95;
 
-  /* --- Severity ramp (orange -> deep red, muted) --- */
+  /* --- Severity ramp --- */
   --sev-critical: #9a2f28;
   --sev-high: #c2410c;
   --sev-medium: #e0762e;
   --sev-low: #e8a87c;
 
-  /* --- Radius (one consistent scale) --- */
+  /* --- Radius --- */
   --r-xs: 6px;
   --r-sm: 9px;
   --r: 12px;
   --r-lg: 16px;
   --r-pill: 999px;
 
-  /* --- Type (font variables injected by next/font in layout.tsx) --- */
+  /* --- Type --- */
   --font-sans: var(--font-plex-sans, "IBM Plex Sans"), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono, "IBM Plex Mono"), ui-monospace, "SF Mono", monospace;
 
-  /* --- Elevation: barely-there, premium --- */
+  /* --- Elevation --- */
   --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
   --shadow: 0 1px 3px rgba(28, 25, 23, 0.05), 0 8px 24px -12px rgba(28, 25, 23, 0.10);
   --shadow-lg: 0 2px 6px rgba(28, 25, 23, 0.06), 0 24px 60px -28px rgba(28, 25, 23, 0.18);
+
+  /* --- Sidebar (app shell) --- */
+  --side: #1c1917;
+  --side-2: #2a2521;
+  --side-ink: #e9e6e1;
+  --side-ink-2: #a8a29e;
+  --side-line: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] {
+  --paper: #17150f;
+  --paper-2: #1e1b15;
+  --paper-3: #272219;
+  --paper-4: #322c22;
+
+  --ink: #f5f1e8;
+  --ink-2: #cdc6b8;
+  --ink-3: #9a9286;
+  --ink-4: #6f685c;
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.15);
+
+  --brand: #f97316;
+  --brand-600: #fb923c;
+  --brand-700: #fdba74;
+  --brand-50: rgba(249, 115, 22, 0.13);
+  --brand-100: rgba(249, 115, 22, 0.22);
+  --brand-line: rgba(249, 115, 22, 0.42);
+
+  --pass: #52c098;    --pass-bg: rgba(16, 168, 120, 0.13);   --pass-line: rgba(82, 192, 152, 0.32);
+  --partial: #eaa53f; --partial-bg: rgba(245, 158, 11, 0.13); --partial-line: rgba(234, 165, 63, 0.32);
+  --fail: #ec7a6f;    --fail-bg: rgba(229, 64, 47, 0.14);     --fail-line: rgba(236, 122, 111, 0.32);
+  --noev: #9e968a;    --noev-bg: rgba(158, 150, 138, 0.12);   --noev-line: rgba(158, 150, 138, 0.30);
+
+  --pass-vivid: #19b985;
+  --partial-vivid: #f7ad2e;
+  --fail-vivid: #ef5544;
+  --noev-vivid: #b0a89b;
+
+  --sev-critical: #e0786d;
+  --sev-high: #ef8a4e;
+  --sev-medium: #f0a567;
+  --sev-low: #e8b794;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px -14px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5), 0 28px 64px -28px rgba(0, 0, 0, 0.7);
+
+  --side: #100e09;
+  --side-2: #1c1912;
+  --side-ink: #f5f1e8;
+  --side-ink-2: #8a8275;
+  --side-line: rgba(255, 255, 255, 0.07);
 }
 
 * { box-sizing: border-box; }
@@ -73,12 +128,15 @@
 html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+::selection { background: var(--brand-100); color: var(--brand-700); }
 
 /* --- Reusable text roles --- */
 .eyebrow {
@@ -102,7 +160,7 @@ html, body {
 
 h1, h2, h3 { letter-spacing: -0.02em; color: var(--ink); margin: 0; }
 
-/* --- Focus ring (consistent across interactive elements) --- */
+/* --- Focus ring --- */
 .focusable:focus-visible,
 button:focus-visible,
 input:focus-visible,
@@ -112,26 +170,42 @@ input:focus-visible,
   border-radius: var(--r-sm);
 }
 
-/* --- Animations (subtle, gated for reduced motion) --- */
+/* --- Animations --- */
 @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ring-draw { from { stroke-dashoffset: var(--ring-len); } to { stroke-dashoffset: var(--ring-off); } }
+@keyframes app-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
+@keyframes app-spin { to { transform: rotate(360deg); } }
 @keyframes step-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 .anim-fade-up { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
 .anim-fade-up-2 { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both; }
 .anim-fade-in { animation: fade-in 0.3s ease-out both; }
-.anim-screen { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
-.ring-progress { animation: ring-draw 1s cubic-bezier(0.22, 1, 0.36, 1) both; }
-.bar-grow { transform-origin: left center; }
 
 @media (prefers-reduced-motion: reduce) {
-  .anim-fade-up, .anim-fade-up-2, .anim-fade-in, .anim-screen, .ring-progress {
+  .anim-fade-up, .anim-fade-up-2, .anim-fade-in {
     animation-duration: 0.001s !important;
   }
 }
 
+/* --- Interactive helpers (used by the app shell) --- */
+.app-card { transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease; }
+.app-nav:hover { background: var(--side-2) !important; }
+.app-row:hover { background: var(--paper-2); }
+
 /* --- Quiet, premium scrollbars --- */
-.scroll-quiet::-webkit-scrollbar { width: 10px; height: 10px; }
-.scroll-quiet::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 999px; border: 3px solid var(--paper); }
+.scroll-quiet::-webkit-scrollbar { width: 11px; height: 11px; }
+.scroll-quiet::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
 .scroll-quiet::-webkit-scrollbar-track { background: transparent; }
+
+/* --- Print / PDF export: drop the app chrome, print the results document --- */
+@media print {
+  [data-app-chrome] { display: none !important; }
+  [data-print-region] {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+  html, body { height: auto !important; background: #ffffff !important; }
+  .app-card { box-shadow: none !important; }
+}

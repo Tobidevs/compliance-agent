@@ -1,9 +1,13 @@
-import { type ControlValidation, type ValidationFinding } from "@/lib/utils";
+import { type ControlValidation, type ValidationFinding } from "@/lib/types";
 
 /* ============================================================
    Shared metadata + helpers for the compliance UI.
    Single source of truth for status / severity / finding colors,
-   ordering, formatting, and the running-workflow steps.
+   ordering, formatting, the running-workflow steps, and the
+   aggregate metrics that drive the dashboard.
+
+   Color tokens reference CSS variables defined in globals.css, so
+   the same metadata themes cleanly in both light and dark mode.
    ============================================================ */
 
 export type StatusKey = ControlValidation["status"];
@@ -26,18 +30,11 @@ export const SEVERITY_COLOR: Record<SeverityKey, string> = {
   low: "var(--sev-low)",
 };
 
-type FindingTone = { label: string; color: string; bg: string; line: string };
+type FindingTone = { label: string; color: string; bg: string; line: string; fill: string };
 export const FINDING_META: Record<FindingKey, FindingTone> = {
-  violation: { label: "Violation", color: "var(--fail)",    bg: "var(--fail-bg)",    line: "var(--fail-line)" },
-  gap:       { label: "Gap",       color: "var(--partial)", bg: "var(--partial-bg)", line: "var(--partial-line)" },
-  pass:      { label: "Pass",      color: "var(--pass)",    bg: "var(--pass-bg)",    line: "var(--pass-line)" },
-};
-
-/* Vivid fills for the findings-composition bars */
-export const FINDING_FILL: Record<FindingKey, string> = {
-  violation: "var(--fail-vivid)",
-  gap: "var(--partial-vivid)",
-  pass: "var(--pass-vivid)",
+  violation: { label: "Violation", color: "var(--fail)",    bg: "var(--fail-bg)",    line: "var(--fail-line)",    fill: "var(--fail-vivid)" },
+  gap:       { label: "Gap",       color: "var(--partial)", bg: "var(--partial-bg)", line: "var(--partial-line)", fill: "var(--partial-vivid)" },
+  pass:      { label: "Pass",      color: "var(--pass)",    bg: "var(--pass-bg)",    line: "var(--pass-line)",    fill: "var(--pass-vivid)" },
 };
 
 export const STATUS_ORDER: Record<StatusKey, number> = {
@@ -56,7 +53,7 @@ export const SEVERITY_ORDER: Record<SeverityKey, number> = {
 
 export const WORKFLOW_STEPS = [
   { key: "clone", label: "Cloning repository", detail: "Fetching source tree and history" },
-  { key: "scope", label: "Resolving control scope", detail: "Mapping selected categories to SOC 2 controls" },
+  { key: "scope", label: "Resolving control scope", detail: "Mapping selected families to SOC 2 & GDPR controls" },
   { key: "scan", label: "Scanning source evidence", detail: "Indexing configuration, IaC, and workflows" },
   { key: "validate", label: "Validating controls", detail: "Reasoning over evidence per control" },
   { key: "compose", label: "Composing report", detail: "Scoring posture and assembling findings" },
@@ -74,8 +71,10 @@ export function sortValidationResults(results: ControlValidation[]) {
   return [...results].sort((left, right) => {
     const statusDifference = STATUS_ORDER[left.status] - STATUS_ORDER[right.status];
     if (statusDifference !== 0) return statusDifference;
-    const leftSeverity = left.severity && left.severity in SEVERITY_ORDER ? SEVERITY_ORDER[left.severity] : Number.MAX_SAFE_INTEGER;
-    const rightSeverity = right.severity && right.severity in SEVERITY_ORDER ? SEVERITY_ORDER[right.severity] : Number.MAX_SAFE_INTEGER;
+    const leftSeverity =
+      left.severity && left.severity in SEVERITY_ORDER ? SEVERITY_ORDER[left.severity] : Number.MAX_SAFE_INTEGER;
+    const rightSeverity =
+      right.severity && right.severity in SEVERITY_ORDER ? SEVERITY_ORDER[right.severity] : Number.MAX_SAFE_INTEGER;
     if (leftSeverity !== rightSeverity) return leftSeverity - rightSeverity;
     return right.confidence - left.confidence;
   });
@@ -100,7 +99,9 @@ export function computeMetrics(results: ControlValidation[]) {
   const sevTotal = severity.critical + severity.high + severity.medium + severity.low;
   const findTotal = findings.violation + findings.gap + findings.pass;
   const statusSegments = (["FAIL", "PARTIAL", "NO_EVIDENCE", "PASS"] as StatusKey[]).map((label) => ({
-    label, count: status[label], color: STATUS_META[label].fill,
+    label,
+    count: status[label],
+    color: STATUS_META[label].fill,
   }));
   return { sorted, total, status, severity, findings, posture, coverage, confidence, sevTotal, findTotal, statusSegments };
 }

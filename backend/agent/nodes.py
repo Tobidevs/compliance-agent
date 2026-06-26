@@ -51,9 +51,13 @@ policy_service = PolicyRAGService(
 gpt_model = init_chat_model(model="openai:gpt-5.4-mini")
 haiku_model = init_chat_model(model="anthropic:claude-haiku-4-5")
 sonnet_model = init_chat_model(model="anthropic:claude-sonnet-4-6")
+# Swap providers via env, e.g. VALIDATION_SUBAGENT_MODEL="openai:gpt-5.4-mini".
+validation_model = init_chat_model(
+    model=os.getenv("VALIDATION_SUBAGENT_MODEL", "anthropic:claude-sonnet-4-6")
+)
 policy_extraction_model = haiku_model.with_structured_output(PolicyExtractionResults)
 policy_validation_model = haiku_model.with_structured_output(PolicyValidationResults)
-compliance_validation_model = sonnet_model.with_structured_output(ValidationBatch)
+compliance_validation_model = validation_model.with_structured_output(ValidationBatch)
 
 github_mcp_manager = GitHubMCPManager()
 
