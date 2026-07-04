@@ -6,11 +6,16 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .api import router as api_router
+from .observability import init_langfuse
 load_dotenv()
 
 init_logger(project="Compliance Agent", api_key=os.environ["BRAINTRUST_API_KEY"])
 handler = BraintrustCallbackHandler()
 set_global_handler(handler)
+
+# Configure Langfuse tracing (no-op if LANGFUSE_* keys are unset). After load_dotenv so
+# the client never initializes with missing credentials.
+init_langfuse()
 
 
 app = FastAPI(title="Compliance Agent API")

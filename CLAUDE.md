@@ -42,6 +42,7 @@ Backend requires `backend/.env` with:
 - `PINECONE_API_KEY` — hybrid vector search + reranking of the control corpus
 - `GITHUB_PERSONAL_ACCESS_TOKEN` — code retrieval via MCP
 - `LANGSMITH_API_KEY` / `LANGSMITH_ENDPOINT` — tracing
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` (or `LANGFUSE_BASE_URL`) — Langfuse tracing of the LangGraph run (optional; tracing is a no-op if unset). Optional `LANGFUSE_TRACING_ENVIRONMENT` (default `development`).
 - `CHROMA_PERSIST_DIR` — local Chroma path for policy-document RAG (default: `./chroma_db`)
 
 Frontend reads `NEXT_PUBLIC_API_BASE_URL` (defaults to `http://127.0.0.1:8000`).

@@ -4,12 +4,17 @@ import os
 import tempfile
 from pathlib import Path
 
+from contextlib import nullcontext
+
 import braintrust
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from langfuse import get_client
+from langfuse.langchain import CallbackHandler
 from agent.utils.policy_rag_service import PolicyRAGService
 from agent.agent import compliance_agent
+from .observability import langfuse_enabled, langfuse_trace
 
 router = APIRouter()
 CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
@@ -124,18 +129,43 @@ async def stream_results(
             "data": payload,
         }
 
+    repo = f"{initial_state['repo_owner']}/{initial_state['repo_name']}"
+    trace_input = {
+        "framework": initial_state["framework"],
+        "category": initial_state["category"],
+        "repo": repo,
+        "source_code_categories": initial_state["source_code_categories"],
+    }
+
+    # Pass the Langfuse handler into the graph so every nested LLM call (evidence and
+    # validation subagents) is captured automatically; group runs by repo via session_id.
+    use_langfuse = langfuse_enabled()
+    config = {"callbacks": [CallbackHandler()]} if use_langfuse else None
+    langfuse_cm = (
+        langfuse_trace(
+            name="compliance_run",
+            input=trace_input,
+            session_id=repo,
+            tags=[initial_state["framework"], "compliance-run"],
+            metadata={
+                "repo": repo,
+                "source_code_categories": ", ".join(
+                    initial_state["source_code_categories"]
+                ),
+            },
+        )
+        if use_langfuse
+        else nullcontext()
+    )
+
     async def event_generator():
         with braintrust.start_span(
             name="compliance_run",
-            input={
-                "framework": initial_state["framework"],
-                "category": initial_state["category"],
-                "repo": f"{initial_state['repo_owner']}/{initial_state['repo_name']}",
-            },
-        ) as span:
+            input=trace_input,
+        ) as span, langfuse_cm as lf_span:
             try:
                 async for mode, data in compliance_agent.astream(
-                    initial_state, stream_mode=["custom", "updates"]
+                    initial_state, stream_mode=["custom", "updates"], config=config
                 ):
                     if mode == "custom":
                         yield f"data: {json.dumps(_normalize_custom_event(data), default=_json_default)}\n\n"
@@ -146,10 +176,19 @@ async def stream_results(
                         }, default=_json_default)}\n\n"
 
                 span.log(output={"status": "completed"})
+                if lf_span is not None:
+                    lf_span.update(output={"status": "completed"})
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
             except Exception as error:
                 span.log(output={"status": "error", "message": str(error)})
+                if lf_span is not None:
+                    lf_span.update(
+                        output={"status": "error", "message": str(error)}
+                    )
                 yield f"data: {json.dumps({'type': 'error', 'message': _format_stream_error(error)})}\n\n"
+            finally:
+                if use_langfuse:
+                    get_client().flush()
 
     return StreamingResponse(
         event_generator(),

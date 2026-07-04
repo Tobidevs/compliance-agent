@@ -1,29 +1,17 @@
 """
-Budget Adherence Rate evaluation for the compliance pipeline's evidence subagent.
+Shared dataset + task infrastructure for the evidence-subagent evals.
 
-This eval is scoped to the EVIDENCE-GATHERING stage only. For each case it:
-  1. Fetches the repo root file listing and retrieves the controls for one SOC 2
-     category from the vector DB (grouped by the specified category).
-  2. Emits one experiment row per category, mirroring the real workflow's dispatch
-     of one evidence subagent per category.
-  3. Runs exactly one evidence subagent for that category's control set (invoking the
-     compiled evidence_subagent subgraph directly so execution STOPS at evidence
-     gathering and never proceeds to compliance validation).
-  4. Grades the subagent's full message transcript with a single LLM-judge choice
-     scorer (`BudgetAdherence`) that emits one of 0.0 / 0.3 / 0.5 / 0.7 / 1.0.
-
-The budgets/protocol rules graded here are exactly those enforced by
-EVIDENCE_SUBAGENT_SYSTEM_PROMPT in agent/prompts.py.
-
-Run from the `backend/` directory:
-
-    braintrust eval evals/budget_adherence_eval.py
+This module is framework-agnostic across judges: it builds the eval cases (one per
+SOC 2/GDPR category, mirroring the real workflow's per-category subagent dispatch), runs
+exactly one evidence subagent per case (invoking the compiled `evidence_subagent` subgraph
+directly so execution STOPS at evidence gathering), and serializes the full message
+transcript. Both the Budget Adherence and Evidence Precision judges grade that same
+transcript, so the subagent runs once per case and is scored twice.
 """
 
 import asyncio
 
-from braintrust import Eval, EvalCase
-from autoevals import LLMClassifier
+from braintrust import EvalCase
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -151,7 +139,8 @@ def serialize_transcript(messages) -> str:
 
     Every get_repository_tree / get_file_content call (with its path argument),
     every think()/conclude_evidence/finished_gathering_evidence call, and every tool
-    result is preserved so the judge can count calls and check protocol ordering.
+    result is preserved so each judge can count calls, check protocol ordering, and
+    inspect which files were fetched and what they contained.
     """
     blocks = []
     for index, message in enumerate(messages):
@@ -197,102 +186,3 @@ async def task(input) -> str:
     # the full compliance_agent graph would otherwise continue into validation.
     result = await evidence_subagent.ainvoke(sub_input)
     return serialize_transcript(result["messages"])
-
-
-# ---------------------------------------------------------------------------
-# Scorer: cohesive Budget Adherence LLM judge with choice scores
-# ---------------------------------------------------------------------------
-CHOICE_SCORES = {
-    "fully_adherent": 1.0,
-    "minor_waste": 0.7,
-    "moderate_waste": 0.5,
-    "major_violation": 0.3,
-    "severe_violation": 0.0,
-}
-
-BUDGET_ADHERENCE_PROMPT = """
-You are a strict auditor of TOOL-CALL BUDGET DISCIPLINE for one evidence-extraction
-subagent inside a SOC 2 compliance pipeline. You judge ONLY how well the agent stayed
-within its tool budgets and followed its operating protocol. You do NOT judge whether
-the gathered evidence is correct, complete, or compliant.
-
-The transcript below is the agent's COMPLETE message list, turn by turn. It begins with
-the system prompt (the rules) and the human message (the assigned controls and the repo
-root file listing), followed by the agent's turns. Each agent turn may contain a
-`think(...)` call and one or more search calls. Tool calls appear as
-`-> tool_call: name({args})` and tool results appear as `TOOL_RESULT <name>`.
-
-## Constraints the agent must obey (per this single subagent)
-
-HARD LIMITS (breaching any of these is a severe violation):
-- At most 5 `get_repository_tree` calls total, across all controls.
-- At most 8 `get_file_content` calls total, across all controls.
-- NEVER call `get_repository_tree` on the repository root: a path argument of "", "/",
-  ".", or a path_filter that targets the root listing is forbidden. The root listing is
-  already provided in the human message.
-- Per control: at most 2 `get_repository_tree` calls and at most 3 `get_file_content` calls.
-- Exactly one `conclude_evidence` call per assigned control (no control skipped, none
-  concluded twice).
-- Exactly one `finished_gathering_evidence` call, and only after every control has been
-  concluded.
-
-PROTOCOL (slips here are minor-to-moderate, not hard breaches):
-- After the first turn, every search turn must include a `think(...)` call together with
-  1-3 search tools in the SAME turn. `think()` is required every turn after the first.
-- No more than 3 tool calls in a single turn.
-- Controls are processed one at a time, in order. The agent should not interleave
-  searches for multiple controls.
-
-EFFICIENCY (waste, even when within limits):
-- No duplicate or redundant fetches (re-fetching the same path, re-listing the same tree).
-- Stop early when fetched files are clearly irrelevant; do not keep searching to prove
-  absence after the per-control budget is reached.
-- Do not exhaust the global budget on a single control.
-
-## Rubric — choose exactly ONE label
-
-- `fully_adherent` (1.0): All hard limits respected, full protocol compliance (think()
-  every turn after the first, 1-3 tools/turn, one conclude per control, one finished
-  call), and no wasted or redundant calls.
-- `minor_waste` (0.7): Within ALL hard limits, but with at most one minor protocol slip
-  OR one small redundant/unnecessary call. Essentially disciplined.
-- `moderate_waste` (0.5): No hard limit breached, but the run is clearly wasteful or has
-  multiple protocol slips (e.g., several missing think() turns, repeated redundant fetches,
-  interleaving controls).
-- `major_violation` (0.3): A per-control sub-cap was exceeded (>2 tree or >3 file on one
-  control), OR there are repeated/serious protocol violations, OR the agent came right up
-  against the global budget through wasteful behavior.
-- `severe_violation` (0.0): Any HARD LIMIT was breached — global tree budget (>5) or file
-  budget (>8) exceeded, `get_repository_tree` called on the root, a control left without
-  exactly one `conclude_evidence`, or `finished_gathering_evidence` missing/duplicated/
-  called before all controls concluded.
-
-Count the calls carefully before deciding. When multiple labels could apply, pick the
-WORST (lowest-scoring) one that is justified by the transcript.
-
-## Transcript to evaluate
-
-{{output}}
-""".strip()
-
-budget_adherence = LLMClassifier(
-    name="BudgetAdherence",
-    prompt_template=BUDGET_ADHERENCE_PROMPT,
-    choice_scores=CHOICE_SCORES,
-    model="gpt-4o",
-    use_cot=True,
-)
-
-
-# ---------------------------------------------------------------------------
-# Eval declaration
-# ---------------------------------------------------------------------------
-Eval(
-    "Compliance Agent",
-    data=build_dataset,
-    task=task,
-    scores=[budget_adherence],
-    # Each evidence subagent makes many haiku calls over large transcripts. Run cases
-    # serially to stay under the org's per-minute token rate limit; raise if your tier allows.
-    max_concurrency=1,
-)

@@ -107,22 +107,34 @@ The core is a `StateGraph` defined in `backend/agent/agent.py`, with node implem
 flowchart TD
     START((START)) --> AE[artifact_extraction]
 
-    AE -->|conditional edge:\nevidence_subagent_dispatch\nSend per cluster| ES[evidence_subagent]
+    AE --> D1{evidence_subagent_dispatch}
 
-    ES --> PV[prepare_validation_subagents]
+    D1 -->|"Send: cluster A"| ESA[evidence_subagent A]
+    D1 -->|"Send: cluster B"| ESB[evidence_subagent B]
+    D1 -->|"Send: cluster N..."| ESN[evidence_subagent N...]
 
-    PV -->|conditional edge:\nvalidation_subagent_dispatch\nSend per cluster| VS[validation_subagent]
+    ESA --> PV[prepare_validation_subagents]
+    ESB --> PV
+    ESN --> PV
 
-    VS --> CV[combine_validation_results]
+    PV --> D2{validation_subagent_dispatch}
+
+    D2 -->|"Send: cluster A"| VSA[validation_subagent A]
+    D2 -->|"Send: cluster B"| VSB[validation_subagent B]
+    D2 -->|"Send: cluster N..."| VSN[validation_subagent N...]
+
+    VSA --> CV[combine_validation_results]
+    VSB --> CV
+    VSN --> CV
     CV --> END((END))
 
     subgraph note1[" "]
         direction LR
-        N1["fan-OUT: one Send per category cluster<br/>fan-IN: evidence_items via operator.add reducer"]
+        N1["fan-OUT: one Send per category cluster<br/>fan-IN: evidence_items / validation_results via operator.add reducer"]
     end
 
     classDef active fill:#dff5e1,stroke:#3a7;
-    class AE,ES,PV,VS,CV active;
+    class AE,ESA,ESB,ESN,PV,VSA,VSB,VSN,CV active;
 ```
 
 > **Note:** the graph also defines `extraction` and `policy_validation` nodes (policy-document RAG path), but their edges are commented out in `agent.py`. The **active path** is `START → artifact_extraction → evidence → prepare → validation → combine → END`. The pipeline is driven entirely by the **scope category list**, not a single dropdown value.
