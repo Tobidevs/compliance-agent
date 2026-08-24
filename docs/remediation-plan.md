@@ -27,13 +27,10 @@ in-flight run and loses all work.
 | 2 — Resilience & reconciliation | done | `33b2164` |
 | 3 — Security hardening | done | `b7fe991` |
 | 4 — Cost & latency | done | `9a31db4` |
-| 5 — Tests, cleanup, observability | **paused** — 5.3 done, 5.1/5.2/5.4/5.5/5.6 remain | partial |
+| 5 — Tests, cleanup, observability | done | `ddca10d` (5.3), `153fb7b` (5.2/5.4/5.5), `78c6224` (5.1/5.6) |
 
-Phase 5 was paused mid-execution. 5.3 (dead code) is committed; **resume at 5.2**
-(Braintrust consolidation), then 5.1/5.4/5.5/5.6.
-
-Phases 1+ live on the `remediation` branch, pushed to `origin/remediation`.
-`main` is frozen at Phase 0.
+All six phases are complete. Phases 1+ live on the `remediation` branch, pushed to
+`origin/remediation`. `main` is frozen at Phase 0.
 
 ---
 
@@ -527,3 +524,72 @@ them:
    the unwrap failure.
 6. **Cache hits do not decrement the ledger** (Phase 4) — cost, not safety. Lower
    priority than the rest.
+
+---
+
+# Closing summary
+
+## What the six phases changed
+
+**Phase 0 — Correctness.** Stopped the pipeline producing wrong reports: the
+`validation_results` reducer no longer double-appends every result; `is_finished` scans the
+whole trailing `ToolMessage` batch instead of only the last one, so a parallel tool call
+can no longer hide the terminate signal; `get_file_content` returns a typed
+`DirListing | FileContent` instead of three shapes (the `str` branch was rendering one
+prompt bullet *per character*); `format_regulation_results` tolerates metadata drift; and
+the frontend accumulates progressive results by `regulation_id` instead of overwriting.
+
+**Phase 1 — Budget enforcement.** Replaced a prompt-only, self-contradictory,
+model-graded budget with a real runtime ledger (`agent/budget.py`) sized from cluster width
+(3 fetches / 2 trees per control). Exhausted calls are refused at the tool boundary and
+never reach the MCP client, so per-run cost is bounded rather than advisory. `think` now
+*reports* the server-computed remainder instead of accepting it from the model, and
+`recursion_limit` is derived from the ledger — LangGraph 1.1.8 defaults to 10007, so the
+subagent previously had no practical ceiling.
+
+**Phase 2 — Resilience & reconciliation.** Both `Send` fan-outs isolate their failures and
+degrade to sentinels, deserialization boundaries are guarded, and an `ERROR` status now
+exists to represent "we failed to assess this." The reconciliation node left-joins the full
+requested roster against what the validators produced and backfills anything missing, so a
+compliance report can no longer silently omit a control. Retries, timeouts and a
+concurrency cap were added, and the LLM nodes made async.
+
+**Phase 3 — Security hardening.** `owner`/`repo` are pinned from graph state and removed
+from the LLM-facing tool schema, closing arbitrary-repo access through the PAT. Fetched
+content is size-capped and wrapped in `<untrusted_*>` delimiters that it cannot forge its
+way out of. `BRAINTRUST_API_KEY` became optional, CORS was narrowed and moved to env, and
+`/api/upload-policy` gained slug validation and a size cap.
+
+**Phase 4 — Cost & latency.** One MCP session and one file cache per cluster (replacing
+~150 handshakes per run), thread compaction after each conclusion, Anthropic prompt-cache
+breakpoints, a TTL-cached control corpus with batched embeddings, and the removal of
+import-time side effects — `PineconeClient.__init__` could previously *create a Pinecone
+index* as a side effect of importing the graph.
+
+**Phase 5 — Tests, cleanup, observability.** Dead code removed (5.3). Braintrust is now the
+sole exporter; Langfuse's module, callback wiring, parallel eval suite and dependency are
+gone, with redaction preserved in the provider-neutral `app/redaction.py` (5.2). The evals
+now measure the system that actually runs — exhaustive `get_controls_for_categories`,
+production's own control-shaping code, the cacheable system message, and a live file cache
+(5.4). `requirements.txt` installs for the first time, `_format_stream_error` stopped
+leaking raw exception text to the browser, the eval runner no longer logs in on import, and
+the frontend lints clean (5.5). The repo went from zero tests to 101 (5.1/5.6).
+
+## Deferred — deliberately not implemented
+
+These were out of scope under the owner's "demo / portfolio polish" decision and remain
+open:
+
+- **API authentication** — `/api/stream` and `/api/upload-policy` are unauthenticated.
+- **Rate limiting** — nothing bounds how many runs a caller can start.
+- **Per-tenant credentials** — one shared `GITHUB_PERSONAL_ACCESS_TOKEN` for every run, so
+  repo access is whatever that token can reach.
+- **LangGraph checkpointing** — the graph compiles without a checkpointer, so a run cannot
+  be resumed or replayed.
+- **Durable job model** (`POST /runs` → `run_id`) — work is tied to the SSE connection, so
+  **a closed browser tab still kills an in-flight run and loses all of its work.** This is
+  the most user-visible of the deferred items.
+
+Also still open, and noted rather than fixed: the falsifiable test behind the
+per-category work unit (see the architecture decision above) has not been run, so the
+choice of per-category over per-control fan-out remains unvalidated by evidence.
