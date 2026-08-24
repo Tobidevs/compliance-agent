@@ -17,6 +17,21 @@ in-flight run and loses all work.
 - One-line comments only. No verbose comment blocks.
 - Backend venv: `cd backend && source .venv/bin/activate`.
 
+
+## Execution status
+
+| Phase | State | Commit |
+|---|---|---|
+| 0 — Correctness | done | `9b6d9da` (on `main`) |
+| 1 — Budget enforcement | done | `27b503a` |
+| 2 — Resilience & reconciliation | done | `33b2164` |
+| 3 — Security hardening | done | `b7fe991` |
+| 4 — Cost & latency | in progress | — |
+| 5 — Tests, cleanup, observability | queued | — |
+
+Phases 1+ live on the `remediation` branch, pushed to `origin/remediation`.
+`main` is frozen at Phase 0.
+
 ---
 
 ## Architecture decision: keep the per-category work unit
@@ -327,7 +342,7 @@ Convert both to `async def` with `await ...ainvoke(...)`.
 
 # Phase 3 — Security hardening
 
-**Not yet scheduled for execution.** Deferred until Phases 0–2 land.
+**Completed — `b7fe991`.**
 
 ### 3.1 — Pin `owner` / `repo` server-side
 `backend/agent/utils/github_mcp.py:68,97`
@@ -380,7 +395,7 @@ and there is no upload size cap. Add both.
 
 # Phase 4 — Cost & latency
 
-**Not yet scheduled for execution.**
+**In progress.**
 
 ### 4.1 — Persistent MCP session
 `backend/agent/utils/github_mcp.py` — every method opens
