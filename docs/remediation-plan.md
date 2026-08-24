@@ -27,7 +27,7 @@ in-flight run and loses all work.
 | 2 — Resilience & reconciliation | done | `33b2164` |
 | 3 — Security hardening | done | `b7fe991` |
 | 4 — Cost & latency | done | `9a31db4` |
-| 5 — Tests, cleanup, observability | queued | — |
+| 5 — Tests, cleanup, observability | in progress | — |
 
 Phases 1+ live on the `remediation` branch, pushed to `origin/remediation`.
 `main` is frozen at Phase 0.
@@ -474,3 +474,53 @@ Remove `backend/app/observability.py`, the Langfuse `CallbackHandler` wiring in
 the harness uses `query_regulations(top_k=10, rerank_top_k=4)` while production uses the
 exhaustive `get_controls_for_categories`. The eval currently measures a system that is
 not the one being run. Align both.
+
+### 5.5 — Loose ends accumulated during Phases 0–4
+
+Found while executing earlier phases; none belonged to the phase that surfaced them.
+
+- **`requirements.txt` cannot produce a working install.** Missing `mcp`,
+  `langchain-mcp-adapters`, `langchain-pinecone`, `langchain-openai`,
+  `langchain-anthropic`. A clean checkout cannot import `agent.agent`. If 5.3 removes
+  the dead `cosine_similarity` import, `langchain-pinecone` drops out entirely — it
+  pins `pinecone<8.0.0` against the repo's `pinecone==8.1.2`, so removing it also
+  resolves a real version conflict.
+- **`_format_stream_error` leaks raw exception text** (`backend/app/api.py:24`) into the
+  SSE `error` event. Unrecognized errors fall through to
+  `f"Compliance agent failed: {raw_message}"`, which can carry internal paths, model
+  ids, or upstream API detail to the browser. Return a generic message and log the
+  detail server-side.
+- **`backend/evals/run_evals.py` calls `Eval(...)` at module scope**, attempting a
+  Braintrust network login on import. It cannot be imported without valid credentials,
+  and it fired an unintended 401 during Phase 1 verification. Move the call behind
+  `if __name__ == "__main__":`.
+- **Three pre-existing `react-hooks` lint errors** in `frontend/src/components/compliance/Donut.tsx`,
+  `ThemeProvider.tsx`, and `useReveal.ts`. Latent before this work; surfaced only once
+  Phase 0 repaired the ESLint config. Not blocking, but they are the only lint failures
+  left in the repo.
+- **Unused lazy accessors** `get_gpt_model` / `get_sonnet_model` and dead imports in
+  `backend/agent/utils/github_mcp.py`, both left by Phase 4's lazy-accessor refactor.
+
+### 5.6 — Tests promoted from earlier phases
+
+Each phase deferred its tests to 5.1 by convention. These were explicitly recommended
+for promotion to permanent tests by the agent that wrote the code, because each guards
+an invariant that regresses **silently** — a passing diff review would not catch any of
+them:
+
+1. **Reconciliation count** (Phase 2) — `len(validation_results)` equals the requested
+   control count. Enforced by an interaction across `_align_validations`, both dispatch
+   fall-throughs, and `reconcile_validation_results`. The property that makes a
+   compliance report trustworthy.
+2. **`owner`/`repo` absent from the generated tool schema** (Phase 3) — assert against
+   `convert_to_openai_tool(...)` output, not the source. Re-adding a parameter reopens
+   arbitrary-repo access through the PAT.
+3. **Fetched content arrives `wrap_untrusted`-delimited with a defanged closing tag**
+   (Phase 3).
+4. **A cache hit is delimited too** (Phase 4) — the live regression path is someone
+   adding a raw-bytes cache accessor.
+5. **`compact_thread` preserves message count and never leaves content without its
+   wrapper** (Phase 4) — guards both provider rejection (orphaned `tool_use` block) and
+   the unwrap failure.
+6. **Cache hits do not decrement the ledger** (Phase 4) — cost, not safety. Lower
+   priority than the rest.
