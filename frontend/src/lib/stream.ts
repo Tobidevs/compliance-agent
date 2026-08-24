@@ -1,3 +1,4 @@
+import { CONTROL_STATUSES } from "@/lib/compliance-theme";
 import { type ControlValidation, type StreamEvent, type ValidationFinding } from "@/lib/types";
 
 /* ============================================================
@@ -33,6 +34,12 @@ export function formatFrontendErrorMessage(message: string) {
   }
 
   return normalizedMessage || "Something went wrong while running the compliance check.";
+}
+
+function parseStatus(value: string): ControlValidation["status"] {
+  const normalized = value.trim().toUpperCase() as ControlValidation["status"];
+  // An unrecognised status would index STATUS_META with undefined and crash rendering.
+  return CONTROL_STATUSES.includes(normalized) ? normalized : "ERROR";
 }
 
 function parseControlValidation(item: unknown): ControlValidation | null {
@@ -81,7 +88,7 @@ function parseControlValidation(item: unknown): ControlValidation | null {
   return {
     regulation_id: candidate.regulation_id,
     title: candidate.title,
-    status: candidate.status as ControlValidation["status"],
+    status: parseStatus(candidate.status),
     severity:
       typeof candidate.severity === "string"
         ? (candidate.severity as ControlValidation["severity"])

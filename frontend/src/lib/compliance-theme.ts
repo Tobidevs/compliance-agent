@@ -21,7 +21,12 @@ export const STATUS_META: Record<StatusKey, StatusTone> = {
   PARTIAL:     { label: "Partial",     color: "var(--partial)", fill: "var(--partial-vivid)", bg: "var(--partial-bg)", line: "var(--partial-line)" },
   FAIL:        { label: "Fail",        color: "var(--fail)",    fill: "var(--fail-vivid)",    bg: "var(--fail-bg)",    line: "var(--fail-line)" },
   NO_EVIDENCE: { label: "No evidence", color: "var(--noev)",    fill: "var(--noev-vivid)",    bg: "var(--noev-bg)",    line: "var(--noev-line)" },
+  ERROR:       { label: "Not assessed", color: "var(--err)",  fill: "var(--err-vivid)",  bg: "var(--err-bg)",  line: "var(--err-line)" },
 };
+
+/* Statuses the backend may send. Anything else is treated as ERROR rather than
+   indexing STATUS_META with an unknown key. */
+export const CONTROL_STATUSES = Object.keys(STATUS_META) as StatusKey[];
 
 export const SEVERITY_COLOR: Record<SeverityKey, string> = {
   critical: "var(--sev-critical)",
@@ -38,10 +43,12 @@ export const FINDING_META: Record<FindingKey, FindingTone> = {
 };
 
 export const STATUS_ORDER: Record<StatusKey, number> = {
-  FAIL: 0,
-  PARTIAL: 1,
-  NO_EVIDENCE: 2,
-  PASS: 3,
+  // Unassessed controls rank first: an unknown verdict is the least resolved risk.
+  ERROR: 0,
+  FAIL: 1,
+  PARTIAL: 2,
+  NO_EVIDENCE: 3,
+  PASS: 4,
 };
 
 export const SEVERITY_ORDER: Record<SeverityKey, number> = {
@@ -85,7 +92,7 @@ export type ResultMetrics = ReturnType<typeof computeMetrics>;
 export function computeMetrics(results: ControlValidation[]) {
   const sorted = sortValidationResults(results);
   const total = sorted.length;
-  const status: Record<StatusKey, number> = { PASS: 0, PARTIAL: 0, FAIL: 0, NO_EVIDENCE: 0 };
+  const status: Record<StatusKey, number> = { PASS: 0, PARTIAL: 0, FAIL: 0, NO_EVIDENCE: 0, ERROR: 0 };
   const severity: Record<SeverityKey, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   const findings: Record<FindingKey, number> = { violation: 0, gap: 0, pass: 0 };
   sorted.forEach((c) => {
@@ -94,11 +101,12 @@ export function computeMetrics(results: ControlValidation[]) {
     c.findings.forEach((f) => findings[f.type]++);
   });
   const posture = total ? ((status.PASS + status.PARTIAL * 0.5) / total) * 100 : 0;
-  const coverage = total ? ((total - status.NO_EVIDENCE) / total) * 100 : 0;
+  // Errored controls have no evidence behind them either, so they do not count as covered.
+  const coverage = total ? ((total - status.NO_EVIDENCE - status.ERROR) / total) * 100 : 0;
   const confidence = total ? (sorted.reduce((s, c) => s + c.confidence, 0) / total) * 100 : 0;
   const sevTotal = severity.critical + severity.high + severity.medium + severity.low;
   const findTotal = findings.violation + findings.gap + findings.pass;
-  const statusSegments = (["FAIL", "PARTIAL", "NO_EVIDENCE", "PASS"] as StatusKey[]).map((label) => ({
+  const statusSegments = (["FAIL", "PARTIAL", "NO_EVIDENCE", "ERROR", "PASS"] as StatusKey[]).map((label) => ({
     label,
     count: status[label],
     color: STATUS_META[label].fill,

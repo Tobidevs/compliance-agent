@@ -131,9 +131,12 @@ class ControlValidation(BaseModel):
         description="Regulation ID from the EvidenceResult (e.g. 'CC6.1.1')."
     )
     title: str = Field(description="Control title from the EvidenceResult.")
-    status: Literal["PASS", "FAIL", "PARTIAL", "NO_EVIDENCE"]
+    # ERROR is set by the runtime only (failed or unparseable assessment), never by the model.
+    status: Literal["PASS", "FAIL", "PARTIAL", "NO_EVIDENCE", "ERROR"]
     severity: Literal["critical", "high", "medium", "low"] | None = Field(
-        description=("Null for PASS and NO_EVIDENCE. " "Required for FAIL and PARTIAL.")
+        description=(
+            "Null for PASS, NO_EVIDENCE and ERROR. " "Required for FAIL and PARTIAL."
+        )
     )
     confidence: float = Field(
         ge=0.0,
@@ -193,6 +196,9 @@ class ComplianceAgentState(TypedDict):
 
     extraction_evidence: Annotated[list[dict], operator.add]
     extraction_errors: Annotated[list[str], operator.add]
+
+    # Written concurrently by failing Send branches, so it needs an additive reducer.
+    cluster_errors: Annotated[list[dict], operator.add]
 
 
 class SubAgentInput(TypedDict):

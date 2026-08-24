@@ -39,12 +39,14 @@
   --partial: #c2680c; --partial-bg: #fdf2e3; --partial-line: rgba(194, 104, 12, 0.30);
   --fail: #b23a2e;    --fail-bg: #fbeeec;    --fail-line: rgba(178, 58, 46, 0.30);
   --noev: #8a8580;    --noev-bg: #f5f4f2;    --noev-line: rgba(138, 133, 128, 0.30);
+  --err: #6d5bd0;     --err-bg: #f0eefb;     --err-line: rgba(109, 91, 208, 0.30);
 
   /* Vivid chart fills */
   --pass-vivid: #10a878;
   --partial-vivid: #f59e0b;
   --fail-vivid: #e5402f;
   --noev-vivid: #a39c95;
+  --err-vivid: #7c67e8;
 
   /* --- Severity ramp --- */
   --sev-critical: #9a2f28;
@@ -101,11 +103,13 @@
   --partial: #eaa53f; --partial-bg: rgba(245, 158, 11, 0.13); --partial-line: rgba(234, 165, 63, 0.32);
   --fail: #ec7a6f;    --fail-bg: rgba(229, 64, 47, 0.14);     --fail-line: rgba(236, 122, 111, 0.32);
   --noev: #9e968a;    --noev-bg: rgba(158, 150, 138, 0.12);   --noev-line: rgba(158, 150, 138, 0.30);
+  --err: #a493f0;     --err-bg: rgba(124, 103, 232, 0.15);    --err-line: rgba(164, 147, 240, 0.32);
 
   --pass-vivid: #19b985;
   --partial-vivid: #f7ad2e;
   --fail-vivid: #ef5544;
   --noev-vivid: #b0a89b;
+  --err-vivid: #8f7bef;
 
   --sev-critical: #e0786d;
   --sev-high: #ef8a4e;

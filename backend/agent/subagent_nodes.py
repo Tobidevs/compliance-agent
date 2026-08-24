@@ -11,6 +11,13 @@ from langgraph.config import get_stream_writer
 from langgraph.prebuilt import InjectedState
 
 from .budget import BudgetLedger
+from .resilience import (
+    DESERIALIZATION_ERRORS,
+    LLM_MAX_RETRIES,
+    LLM_TIMEOUT_SECONDS,
+    degraded_evidence_result,
+    format_error,
+)
 from .tools import conclude_evidence, finished_gathering_evidence, think
 
 from .state import EvidenceResult, SubAgentInput
@@ -72,15 +79,36 @@ EVIDENCE_TOOLS = [
 
 # Swap providers via env, e.g. EVIDENCE_SUBAGENT_MODEL="openai:gpt-5.4-mini".
 evidence_model = init_chat_model(
-    model=os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5")
+    model=os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5"),
+    max_retries=LLM_MAX_RETRIES,
+    timeout=LLM_TIMEOUT_SECONDS,
 )
 llm = evidence_model.bind_tools(EVIDENCE_TOOLS)
 
 
 def _parse_tool_content(content):
     if isinstance(content, str):
-        return json.loads(content)
+        # Tool content is model-adjacent text; non-JSON must not kill the subagent.
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
     return content
+
+
+def _coerce_evidence_result(raw_result) -> EvidenceResult | None:
+    """Build an EvidenceResult, degrading to a placeholder rather than raising."""
+    if isinstance(raw_result, EvidenceResult):
+        return raw_result
+    if not isinstance(raw_result, dict):
+        return None
+    try:
+        return EvidenceResult(**raw_result)
+    except DESERIALIZATION_ERRORS as error:
+        # Keep the control visible downstream whenever the id survived the malformed payload.
+        if not str(raw_result.get("regulation_id") or "").strip():
+            return None
+        return degraded_evidence_result(raw_result, format_error(error))
 
 
 def _find_matching_tool_call_args(state: SubAgentInput, tool_message) -> dict | None:
@@ -110,12 +138,13 @@ def _extract_concluded_evidence_result(state: SubAgentInput) -> list[EvidenceRes
     if conclusion is None:
         conclusion = _parse_tool_content(last_message.content)
 
-    raw_result = conclusion.get("evidence_result", conclusion)
+    if isinstance(conclusion, dict):
+        raw_result = conclusion.get("evidence_result", conclusion)
+    else:
+        raw_result = conclusion
 
-    if isinstance(raw_result, EvidenceResult):
-        return [raw_result]
-
-    return [EvidenceResult(**raw_result)]
+    evidence_result = _coerce_evidence_result(raw_result)
+    return [evidence_result] if evidence_result else []
 
 
 def _extract_pending_concluded_evidence_results(
@@ -147,7 +176,7 @@ def _extract_pending_concluded_evidence_results(
 
 
 @braintrust.traced(name="gather_evidence")
-def gather_evidence_node(state: SubAgentInput):
+async def gather_evidence_node(state: SubAgentInput):
     writer = get_stream_writer()
 
     evidence_results = _extract_concluded_evidence_result(state)
@@ -157,7 +186,7 @@ def gather_evidence_node(state: SubAgentInput):
     # Runs before every tool batch, so the per-control counters track the current control.
     ledger.sync_progress(state["messages"])
 
-    response = llm.invoke(state["messages"])
+    response = await llm.ainvoke(state["messages"])
 
     # search_paths = ", ".join(
     #     f"/{tool_call['args'].get('path', '')}"

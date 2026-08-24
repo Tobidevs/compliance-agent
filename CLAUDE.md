@@ -63,6 +63,9 @@ The core is a **LangGraph graph** in `agent.py`; nodes live in `nodes.py`. The a
 2. **`evidence_subagent_dispatch` → `evidence_subagent`** — a conditional edge fans out one `Send` **per cluster**; each runs the evidence sub-agent (`subagents.py`, a small `StateGraph` of gather → conclude using tools in `tools.py`) to search code/policies. Results accumulate into `evidence_items` (an `operator.add` reducer — never re-return the full list, or items double).
 3. **`prepare_validation_subagents`** merges evidence back into clusters (`update_clusters_with_evidence`), then **`validation_subagent_dispatch` → `validation_subagent`** fans out per cluster again, scoping evidence by `regulation_id` and producing a `ValidationBatch` of `ControlValidation`s (structured output from Sonnet).
 4. **`combine_validation_results`** — flattens all batches into the final `validation_results`.
+5. **`reconcile_validation_results`** — left-joins the full requested control roster (from `state["clusters"]`) against what the validators actually produced and backfills anything missing as `ERROR` (the cluster's subagent failed — see `cluster_errors`) or `NO_EVIDENCE` (the validator returned a short batch). Guarantees `len(validation_results)` equals the requested control count.
+
+Both `Send` targets isolate their own failures: an exception (including `GraphRecursionError`) in one cluster records a `cluster_errors` entry and degrades to sentinel results instead of aborting the run. Fan-out concurrency, LLM retries, and LLM timeouts are configured in `agent/resilience.py` via `CLUSTER_CONCURRENCY` / `LLM_MAX_RETRIES` / `LLM_TIMEOUT_SECONDS`.
 
 State flows through `ComplianceAgentState` (`state.py`). Key fields: `framework`, `category`, `source_code_categories`, `regulations`, `clusters`, `artifact_paths`, `evidence_items`, `validation_results`. Models are tiered in `nodes.py`: GPT for policy steps, Haiku for cheap extraction, Sonnet for final validation. Nodes emit live progress via `get_stream_writer()` (`status`/`updates` events).
 
@@ -77,5 +80,6 @@ State flows through `ComplianceAgentState` (`state.py`). Key fields: `framework`
 
 ### Key Types & Tools
 
-- `state.py` — `ComplianceAgentState`; `ControlValidation` (`status` pass/fail/partial/error, `severity`, `confidence`, `findings`, `evidence_snippets`); `EvidenceResult`.
+- `state.py` — `ComplianceAgentState`; `ControlValidation` (`status` PASS/FAIL/PARTIAL/NO_EVIDENCE/ERROR — `ERROR` is runtime-only and never emitted by the model, `severity`, `confidence`, `findings`, `evidence_snippets`); `EvidenceResult`.
+- `resilience.py` — sentinel `ControlValidation`/`EvidenceResult` builders, the shared cluster semaphore, and the LLM retry/timeout knobs.
 - `prompts.py` — sub-agent system prompts. `tools.py` — `think`, `conclude_evidence`, `finished_gathering_evidence` plus GitHub/RAG search. `clusters.py` — grouping + evidence merge logic.

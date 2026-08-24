@@ -10,6 +10,7 @@ from .nodes import (
     invoke_validation_subagent,
     policy_validator_node,
     prepare_validation_subagents,
+    reconcile_validation_results,
     validation_subagent_dispatch,
 )
 import asyncio
@@ -23,6 +24,7 @@ compliance_agent_builder.add_node("artifact_extraction", artifact_extractor_node
 compliance_agent_builder.add_node("validation_subagent", invoke_validation_subagent)
 compliance_agent_builder.add_node("prepare_validation_subagents", prepare_validation_subagents)
 compliance_agent_builder.add_node("combine_validation_results", combine_validation_results)
+compliance_agent_builder.add_node("reconcile_validation_results", reconcile_validation_results)
 
 # compliance_agent_builder.add_edge(START, "extraction")
 # compliance_agent_builder.add_edge("extraction", "policy_validation")
@@ -35,7 +37,11 @@ compliance_agent_builder.add_conditional_edges(
     "prepare_validation_subagents", validation_subagent_dispatch
 )
 compliance_agent_builder.add_edge("validation_subagent", "combine_validation_results")
-compliance_agent_builder.add_edge("combine_validation_results", END)
+# Reconciliation runs last so it sees every cluster's batch plus every cluster failure.
+compliance_agent_builder.add_edge(
+    "combine_validation_results", "reconcile_validation_results"
+)
+compliance_agent_builder.add_edge("reconcile_validation_results", END)
 
 
 compliance_agent = compliance_agent_builder.compile()

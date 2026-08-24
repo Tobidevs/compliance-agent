@@ -356,6 +356,9 @@ Assess each control using exactly one of these statuses:
               were returned. Do not infer or speculate — return this
               status directly.
 
+There is a fifth status, ERROR, reserved for the runtime to mark controls it
+failed to assess. Never emit it yourself — use NO_EVIDENCE when nothing was found.
+
 ## Severity assignment
 
 Assign severity for FAIL and PARTIAL only. Set to null for PASS and
