@@ -27,18 +27,18 @@ export function Donut({
   const c = size / 2;
   const circ = 2 * Math.PI * r;
 
-  let acc = 0;
-  const arcs = segments.map((s) => {
-    const frac = total ? s.count / total : 0;
-    const len = frac * circ * reveal;
-    const arc = {
+  const fractions = segments.map((s) => (total ? s.count / total : 0));
+  const arcs = segments.map((s, i) => {
+    const len = fractions[i] * circ * reveal;
+    // Each arc starts where the preceding ones end; summed inline rather than through a
+    // mutable accumulator, which React's immutability rule flags after render completes.
+    const start = fractions.slice(0, i).reduce((sum, f) => sum + f * circ, 0);
+    return {
       label: s.label,
       color: s.color,
       dashArray: `${Math.max(len - 1.5, 0)} ${circ}`,
-      offset: -acc,
+      offset: -start,
     };
-    acc += frac * circ;
-    return arc;
   });
 
   const active = hover ? segments.find((s) => s.label === hover) : null;

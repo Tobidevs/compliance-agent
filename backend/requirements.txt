@@ -4,7 +4,7 @@ aiohttp==3.13.5
 aiosignal==1.4.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
-anthropic==0.96.0
+anthropic==0.125.0
 anyio==4.13.0
 attrs==26.1.0
 autoevals==0.3.0
@@ -38,11 +38,11 @@ httptools==0.7.1
 httpx==0.28.1
 httpx-sse==0.4.3
 huggingface_hub==1.11.0
-idna==3.11
+idna==3.19
 importlib_metadata==8.7.1
 importlib_resources==7.1.0
 Jinja2==3.1.6
-jiter==0.14.0
+jiter==0.16.0
 jsonpatch==1.33
 jsonpointer==3.1.1
 jsonschema==4.26.0
@@ -50,10 +50,12 @@ jsonschema-specifications==2025.9.1
 kubernetes==35.0.0
 langchain==1.2.15
 langchain-classic==1.0.4
+langchain-anthropic==1.6.1
 langchain-community==0.4.1
-langchain-core==1.3.0
+langchain-core==1.6.0
+langchain-mcp-adapters==0.3.0
+langchain-openai==1.6.0
 langchain-text-splitters==1.1.2
-langfuse==4.6.1
 langgraph==1.1.8
 langgraph-checkpoint==4.0.2
 langgraph-prebuilt==1.0.10
@@ -61,6 +63,7 @@ langgraph-sdk==0.3.13
 langsmith==0.7.32
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
+mcp==1.29.0
 marshmallow==3.26.2
 mdurl==0.1.2
 mmh3==5.2.1
@@ -70,7 +73,7 @@ mypy_extensions==1.1.0
 numpy==2.4.4
 oauthlib==3.3.1
 onnxruntime==1.24.4
-openai==2.32.0
+openai==3.3.1
 opentelemetry-api==1.41.0
 opentelemetry-exporter-otlp-proto-common==1.41.0
 opentelemetry-exporter-otlp-proto-grpc==1.41.0
@@ -80,7 +83,7 @@ opentelemetry-semantic-conventions==0.62b0
 orjson==3.11.8
 ormsgpack==1.12.2
 overrides==7.7.0
-packaging==26.1
+packaging==24.2
 pandas==3.0.2
 pinecone==8.1.2
 pinecone-plugin-assistant==3.0.3
@@ -95,6 +98,8 @@ pydantic_core==2.46.2
 Pygments==2.20.0
 pypdf==6.10.2
 PyPika==0.51.1
+pytest==9.1.1
+pytest-asyncio==1.4.0
 pyproject_hooks==1.2.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2

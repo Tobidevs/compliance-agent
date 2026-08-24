@@ -1,8 +1,9 @@
 """Secret redaction applied to trace payloads before they leave the process.
 
 Provider-neutral on purpose: this used to live inside the Langfuse module, which made it
-the only redaction in the system and tied it to the one exporter being retired. Braintrust
-and Langfuse both hook into `mask_value` from here.
+the only redaction in the system and tied it to the one exporter being retired. Langfuse is
+gone; `mask_value` is registered on Braintrust via `set_masking_function` in main.py and
+stays exporter-agnostic so the next consolidation cannot lose redaction either.
 """
 
 import re
@@ -23,8 +24,3 @@ def mask_value(data):
     if isinstance(data, (list, tuple)):
         return [mask_value(value) for value in data]
     return data
-
-
-def mask_keyword(*, data, **_):
-    """Langfuse calls its mask hook with keyword arguments; Braintrust uses positional."""
-    return mask_value(data)
