@@ -1,3 +1,8 @@
+from typing import Annotated
+
+from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
+
 from .state import EvidenceResult
 
 
@@ -18,16 +23,17 @@ def finished_gathering_evidence():
     return {"status": "finished"}
 
 
+@tool("think")
 def think(
     evidence: str,
     code_snippets: list[str],
     finished: bool,
-    fetches_remaining: int,
-    tree_calls_remaining: int,
+    state: Annotated[dict, InjectedState],
 ) -> dict:
     """
     Structured mid-loop checkpoint. Call this immediately after EVERY get_file_content call,
-    before issuing any other tool call.
+    before issuing any other tool call. Returns your remaining tool budget, which is tracked
+    by the runtime — you do not report it.
 
     Args:
         evidence: One or two factual sentences describing what this file contained
@@ -37,14 +43,19 @@ def think(
         code_snippets: Exact verbatim code from the file relevant to the current control.
                         Preserve whitespace. Empty list if nothing relevant was found.
         finished: A boolean flag indicating whether the current control is ready to conclude.
-        fetches_remaining: An integer indicating how many more file fetches are allowed before concluding.
-        tree_calls_remaining: An integer indicating how many more repository tree calls are allowed before concluding.
     """
-    # No-op server-side. Forces the model to externalize and structure
-    # its working memory after each fetch before context grows further.
+    # Forces the model to externalize its working memory after each fetch, and is the
+    # channel by which the runtime reports the authoritative remaining budget back.
+    ledger = state.get("budget")
+    if ledger is None:
+        return {"status": "logged", "snippets_captured": len(code_snippets)}
+
     return {
         "status": "logged",
         "snippets_captured": len(code_snippets),
-        "tree_calls_remaining": tree_calls_remaining,
-        "fetches_remaining": fetches_remaining,
+        "current_control": ledger.current_control_id,
+        "fetches_remaining_this_control": ledger.control_remaining("fetch"),
+        "tree_calls_remaining_this_control": ledger.control_remaining("tree"),
+        "fetches_remaining_this_cluster": ledger.cluster_remaining("fetch"),
+        "tree_calls_remaining_this_cluster": ledger.cluster_remaining("tree"),
     }

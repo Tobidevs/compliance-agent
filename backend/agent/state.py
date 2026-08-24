@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 from langgraph.graph.message import MessagesState
 import operator
 
+from .budget import BudgetLedger
+
 
 class PolicyExtractionResult(BaseModel):
     title: str = Field(description="The title of the policy claim.")
@@ -201,6 +203,8 @@ class SubAgentInput(TypedDict):
     priority_paths: list[str]  # pre-filtered high-relevance paths for this cluster
     repo_owner: str
     repo_name: str
+    # Mutable, passed by reference: every budgeted tool call in the run debits this object.
+    budget: BudgetLedger
     evidence_results: Annotated[list[EvidenceResult], operator.add]
 
 

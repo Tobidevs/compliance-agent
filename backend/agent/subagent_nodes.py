@@ -1,11 +1,16 @@
 import json
 import os
+from typing import Annotated
+
 import braintrust
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
+from langgraph.prebuilt import InjectedState
 
+from .budget import BudgetLedger
 from .tools import conclude_evidence, finished_gathering_evidence, think
 
 from .state import EvidenceResult, SubAgentInput
@@ -15,19 +20,61 @@ load_dotenv()
 
 github_mcp_manager = GitHubMCPManager()
 
+
+@tool("get_file_content")
+async def get_file_content(
+    owner: str, repo: str, path: str, state: Annotated[dict, InjectedState]
+) -> str:
+    """Retrieve the content of a file from a GitHub repository.
+
+    If path is a folder, returns the list of paths it contains instead.
+    """
+    ledger = state.get("budget")
+    refusal = ledger.spend("fetch") if ledger is not None else None
+    # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
+    if refusal:
+        return refusal
+    return await github_mcp_manager.get_file_content(owner=owner, repo=repo, path=path)
+
+
+@tool("get_repository_tree")
+async def get_repository_tree(
+    owner: str,
+    repo: str,
+    state: Annotated[dict, InjectedState],
+    tree_sha: str | None = None,
+    recursive: bool = False,
+    path_filter: str | None = None,
+):
+    """Retrieve the repository tree for a ref or tree SHA."""
+    ledger = state.get("budget")
+    refusal = ledger.spend("tree") if ledger is not None else None
+    # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
+    if refusal:
+        return refusal
+    return await github_mcp_manager.get_repository_tree(
+        owner=owner,
+        repo=repo,
+        tree_sha=tree_sha,
+        recursive=recursive,
+        path_filter=path_filter,
+    )
+
+
+# Single source of truth for the subagent's tools: bound to the model and run by ToolNode.
+EVIDENCE_TOOLS = [
+    get_file_content,
+    get_repository_tree,
+    conclude_evidence,
+    finished_gathering_evidence,
+    think,
+]
+
 # Swap providers via env, e.g. EVIDENCE_SUBAGENT_MODEL="openai:gpt-5.4-mini".
 evidence_model = init_chat_model(
     model=os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5")
 )
-llm = evidence_model.bind_tools(
-    [
-        github_mcp_manager.get_file_content,
-        github_mcp_manager.get_repository_tree,
-        conclude_evidence,
-        finished_gathering_evidence,
-        think,
-    ]
-)
+llm = evidence_model.bind_tools(EVIDENCE_TOOLS)
 
 
 def _parse_tool_content(content):
@@ -104,6 +151,12 @@ def gather_evidence_node(state: SubAgentInput):
     writer = get_stream_writer()
 
     evidence_results = _extract_concluded_evidence_result(state)
+
+    # Self-heal for callers that invoke the subgraph directly (evals) without a ledger.
+    ledger = state.get("budget") or BudgetLedger.for_controls(state.get("controls", []))
+    # Runs before every tool batch, so the per-control counters track the current control.
+    ledger.sync_progress(state["messages"])
+
     response = llm.invoke(state["messages"])
 
     # search_paths = ", ".join(
@@ -116,7 +169,7 @@ def gather_evidence_node(state: SubAgentInput):
     #     "message": f"Searching {search_paths}",
     # })
 
-    result = {"messages": [response]}
+    result = {"messages": [response], "budget": ledger}
     if evidence_results:
         result["evidence_results"] = evidence_results
     return result

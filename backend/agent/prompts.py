@@ -97,14 +97,14 @@ get_repository_tree(owner, repo, path_filter, recursive)
   The root listing is already provided as your FULL ARTIFACT PATH LIST input. Use it.
   Only call get_repository_tree to drill into a specific subdirectory.
 
-  SEPARATE BUDGET: 5 calls total across ALL controls. Track this carefully.
+  Budgeted: see TOOL BUDGET below.
 
 get_file_content(owner, repo, path)
   If path is a folder → returns list of contained files/folders.
   If path is a file   → returns raw file content.
-  GLOBAL BUDGET: 8 calls across ALL controls. Track this carefully.
+  Budgeted: see TOOL BUDGET below.
 
-think(evidence, code_snippets, finished, fetches_remaining, tree_calls_remaining)
+think(evidence, code_snippets, finished)
   Structured reasoning checkpoint. Required every turn after the first.
 
     evidence              → One or two factual sentences describing what the fetched
@@ -116,10 +116,12 @@ think(evidence, code_snippets, finished, fetches_remaining, tree_calls_remaining
                             Preserve all whitespace and indentation. Empty list if none.
     finished              → true only when the CURRENT control is ready for
                             conclude_evidence.
-    fetches_remaining     → Your remaining get_file_content budget integer. Decrement
-                            after every get_file_content call.
-    tree_calls_remaining  → Your remaining get_repository_tree budget integer. Decrement
-                            after every get_repository_tree call.
+
+  think() RETURNS your authoritative remaining budget:
+    current_control, fetches_remaining_this_control, tree_calls_remaining_this_control,
+    fetches_remaining_this_cluster, tree_calls_remaining_this_cluster.
+  You do not report or track budget numbers yourself — read them from this return value
+  and plan your next batch of calls to fit inside them.
 
 conclude_evidence(evidence_result)
   Call after completing evidence gathering for exactly ONE control. After this tool
@@ -161,19 +163,38 @@ this decision ladder in order:
      fetch only the files that match the current control.
 
   3. NO CLEAR SIGNAL — Neither a file nor a subdirectory in the root listing suggests
-     relevance. After the per-control budget below is exhausted, stop and call
-     conclude_evidence with no_evidence_found=true for that control. Move to the next.
+     relevance. Once the budget below is exhausted, stop and call conclude_evidence
+     with no_evidence_found=true for that control. Move to the next.
 
-## PER-CONTROL ANTI-STUCK BUDGET
+## TOOL BUDGET
 
-Do not spend the whole global budget on one control. For each control:
+Your search budget is tracked and ENFORCED by the runtime. It is not an honour system
+and it is not something you count yourself.
 
-- Maximum 2 get_repository_tree calls.
-- Maximum 3 get_file_content calls.
-- Stop earlier if fetched files are clearly irrelevant.
-- If these calls do not reveal relevant evidence, conclude that control with
-  no_evidence_found=true and continue to the next control.
-- Do not keep searching to prove absence after the per-control budget is reached.
+Per control:
+- 3 get_file_content calls.
+- 2 get_repository_tree calls.
+
+Per cluster (across every control assigned to you):
+- 3 get_file_content calls per assigned control.
+- 2 get_repository_tree calls per assigned control.
+
+The per-control allowance is what you plan against; the cluster total exists so that
+overspending early leaves less for the controls that follow. Spend within the per-control
+allowance and the cluster total takes care of itself.
+
+How enforcement works:
+- Every get_file_content and get_repository_tree call is debited by the runtime.
+- Once an allowance is spent, further calls are REFUSED: the tool does not run, no
+  repository data comes back, and you receive a message beginning "BUDGET REFUSED".
+- A refusal is final. Retrying the same tool, or a different path, will be refused too.
+- When you get a BUDGET REFUSED message, call conclude_evidence immediately for the
+  current control using only the evidence you already gathered — set
+  no_evidence_found=true if you gathered none — then move on as the message instructs.
+- Read your remaining budget from think()'s return value, never from memory.
+
+Stop earlier than the allowance if fetched files are clearly irrelevant. Do not keep
+searching to prove absence: an unspent budget is a good outcome, not a wasted one.
 
 You may mix tool types within the same turn. For example, you can call
 get_repository_tree on one subdirectory and get_file_content on a known file in the
@@ -199,12 +220,12 @@ EVERY SUBSEQUENT TURN
 
   Valid output patterns:
 
-    [think(evidence="...", code_snippets=[...], finished=false, fetches_remaining=8, tree_calls_remaining=4)]
+    [think(evidence="...", code_snippets=[...], finished=false)]
     [get_file_content(path="app/auth/route.ts")]
     [get_file_content(path="middleware.ts")]
     [get_repository_tree(owner="...", repo="...", path_filter="lib/session", recursive=true)]
 
-    [think(evidence="...", code_snippets=[...], finished=false, fetches_remaining=7, tree_calls_remaining=4)]
+    [think(evidence="...", code_snippets=[...], finished=false)]
     [get_file_content(path="lib/session/store.ts")]
     [get_file_content(path="lib/session/cookie.ts")]
 
@@ -226,7 +247,7 @@ Never investigate multiple controls in parallel. For each control:
    requirement and its points of focus (collectively) shape a single unified search.
 2. Fetch files whose name or path suggests relevance to the current control. Prefer files
    that surface several of the control's points of focus at once over many narrow lookups.
-3. Stop when useful evidence is found or the per-control anti-stuck budget is reached.
+3. Stop when useful evidence is found or the per-control budget is reached.
 4. Call conclude_evidence() with exactly one full evidence_result for the current control.
 5. Move to the next control only after conclude_evidence returns.
 6. When all controls are processed, call finished_gathering_evidence().
@@ -271,7 +292,9 @@ or control.
 - evidence in think() must be strictly factual — what the evidence IS, not what it means.
 - conclude_evidence() is called exactly once per control.
 - finished_gathering_evidence() is called exactly once, after all controls have concluded.
-- Do not spend more than 2 tree calls or 3 file fetches on a single control.
+- Do not spend more than 2 tree calls or 3 file fetches on a single control; the runtime
+  will refuse the ones beyond that.
+- A BUDGET REFUSED result means conclude the current control now, not retry.
 """
 
 VALIDATION_SUBAGENT_SYSTEM_PROMPT = """

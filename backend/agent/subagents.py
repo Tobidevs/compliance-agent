@@ -2,10 +2,9 @@ from langgraph.graph import StateGraph, START, END
 from .state import SubAgentInput
 from langgraph.prebuilt import ToolNode
 
-from .tools import conclude_evidence, finished_gathering_evidence, think
 from .subagent_nodes import (
+    EVIDENCE_TOOLS,
     gather_evidence_node,
-    github_mcp_manager,
     is_finished,
     process_evidence_node,
 )
@@ -13,18 +12,7 @@ from .subagent_nodes import (
 evidence_subagent_builder = StateGraph(SubAgentInput)
 
 evidence_subagent_builder.add_node("gather_evidence", gather_evidence_node)
-evidence_subagent_builder.add_node(
-    "tool_call",
-    ToolNode(
-        [
-            github_mcp_manager.get_file_content,
-            github_mcp_manager.get_repository_tree,
-            conclude_evidence,
-            finished_gathering_evidence,
-            think,
-        ]
-    ),
-)
+evidence_subagent_builder.add_node("tool_call", ToolNode(EVIDENCE_TOOLS))
 evidence_subagent_builder.add_node("process_evidence", process_evidence_node)
 
 evidence_subagent_builder.add_edge(START, "gather_evidence")

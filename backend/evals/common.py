@@ -15,6 +15,7 @@ from braintrust import EvalCase
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.budget import FETCHES_PER_CONTROL, TREES_PER_CONTROL, BudgetLedger
 from agent.prompts import EVIDENCE_SUBAGENT_SYSTEM_PROMPT
 from agent.subagents import evidence_subagent
 from agent.utils.agent_utils import _build_evidence_user_message
@@ -23,9 +24,10 @@ from agent.utils.github_mcp import GitHubMCPManager
 
 load_dotenv()
 
-# Per-subagent budgets enforced by EVIDENCE_SUBAGENT_SYSTEM_PROMPT.
-TREE_BUDGET = 5  # get_repository_tree calls across all controls
-FILE_BUDGET = 8  # get_file_content calls across all controls
+# Per-subagent budgets, enforced at the tool boundary by agent/budget.py (not by the
+# prompt). These are PER CONTROL; a cluster's total is the cap times its control count.
+TREE_BUDGET = TREES_PER_CONTROL  # get_repository_tree calls per control
+FILE_BUDGET = FETCHES_PER_CONTROL  # get_file_content calls per control
 
 # How many controls to retrieve per category from the vector DB (the actual workflow's
 # artifact_extractor_node uses top_k=10 with rerank_top_k=4).
@@ -117,8 +119,10 @@ async def build_dataset():
                     "num_controls": len(controls),
                     "framework": framework,
                     "repo": f"{repo['repo_owner']}/{repo['repo_name']}",
-                    "tree_budget": TREE_BUDGET,
-                    "file_budget": FILE_BUDGET,
+                    "tree_budget_per_control": TREE_BUDGET,
+                    "file_budget_per_control": FILE_BUDGET,
+                    "tree_budget_total": TREE_BUDGET * len(controls),
+                    "file_budget_total": FILE_BUDGET * len(controls),
                 },
             )
 
@@ -178,6 +182,8 @@ async def task(input) -> str:
         "repo_owner": input["repo_owner"],
         "repo_name": input["repo_name"],
     }
+    # Same ledger production dispatch builds, so the eval measures the enforced system.
+    sub_input["budget"] = BudgetLedger.for_controls(sub_input["controls"])
     sub_input["messages"] = [
         SystemMessage(content=EVIDENCE_SUBAGENT_SYSTEM_PROMPT),
         HumanMessage(content=_build_evidence_user_message(sub_input)),
@@ -185,5 +191,7 @@ async def task(input) -> str:
 
     # Invoking the compiled subgraph directly stops execution at evidence gathering;
     # the full compliance_agent graph would otherwise continue into validation.
-    result = await evidence_subagent.ainvoke(sub_input)
+    result = await evidence_subagent.ainvoke(
+        sub_input, config={"recursion_limit": sub_input["budget"].recursion_limit()}
+    )
     return serialize_transcript(result["messages"])

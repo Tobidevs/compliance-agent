@@ -34,6 +34,7 @@ from .utils.agent_utils import (
     _build_validation_user_message,
 )
 from .subagents import evidence_subagent
+from .budget import BudgetLedger
 from .clusters import (
     group_controls_into_clusters,
     filter_paths_for_cluster,
@@ -150,11 +151,15 @@ async def policy_validator_node(state: ComplianceAgentState):
 
 async def invoke_evidence_subagent(state, config: RunnableConfig | None = None):
     base_config = config or {}
+    ledger = state.get("budget") or BudgetLedger.for_controls(state.get("controls", []))
     evidence_result = await evidence_subagent.ainvoke(
-        state,
+        {**state, "budget": ledger},
         config={
             **base_config,
             "name": f"invoked_evidence_subagent_{state['cluster_id']}",
+            # LangGraph 1.1.8 defaults to 10007 steps, so a stuck subagent loops
+            # effectively forever; the enforced budget gives it a real ceiling.
+            "recursion_limit": ledger.recursion_limit(),
         },
     )
 
@@ -240,6 +245,8 @@ def evidence_subagent_dispatch(
             "artifact_paths": file_paths,
             "repo_owner": state["repo_owner"],
             "repo_name": state["repo_name"],
+            # Sized from cluster width: 3 fetches / 2 trees per assigned control.
+            "budget": BudgetLedger.for_controls(controls),
         }
         subagent_input["messages"] = [
             SystemMessage(content=EVIDENCE_SUBAGENT_SYSTEM_PROMPT),
