@@ -3,32 +3,16 @@
 The agent runs on LangGraph/LangChain, so we use Langfuse's LangChain CallbackHandler
 integration: a single handler passed into the top-level graph invocation auto-captures
 every nested LLM call (model names, token usage, generations) across the evidence and
-validation subagents. This module configures the Langfuse singleton, masks credential-like
-tokens before export, and exposes a root-span context manager that sets trace-level
+validation subagents. This module configures the Langfuse singleton, wires in the shared
+secret mask before export, and exposes a root-span context manager that sets trace-level
 attributes (name, session, tags, metadata) shared by all nested observations.
 """
 
 import os
-import re
 from contextlib import contextmanager
 
-# Conservative redaction of credential-like tokens before anything is sent to Langfuse.
-# Kept tight so normal source code / compliance text is never mangled.
-_SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9\-_]{8,}|pk-lf-[A-Za-z0-9\-]{6,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._\-+/]+=*)"
-)
-
-
-def _mask(*, data, **_):
-    """Recursively redact secret-like strings in trace input/output."""
-    if isinstance(data, str):
-        return _SECRET_RE.sub("[REDACTED]", data)
-    if isinstance(data, dict):
-        return {key: _mask(data=value) for key, value in data.items()}
-    if isinstance(data, (list, tuple)):
-        return [_mask(data=value) for value in data]
-    return data
-
+# Redaction now lives in app/redaction.py so it outlives this Langfuse-only module.
+from .redaction import mask_keyword as _mask
 
 _enabled = False
 

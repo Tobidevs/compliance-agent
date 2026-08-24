@@ -28,14 +28,29 @@ load_dotenv()
 github_mcp_manager = GitHubMCPManager()
 
 
+_NO_REPO_PINNED = (
+    "REPOSITORY NOT CONFIGURED — no repository is pinned for this run, so no data was "
+    "fetched. Conclude the current control with no_evidence_found=true."
+)
+
+
+def _pinned_repo(state: dict) -> tuple[str, str]:
+    """The repo under audit comes from graph state only, never from the model."""
+    return (
+        str(state.get("repo_owner") or "").strip(),
+        str(state.get("repo_name") or "").strip(),
+    )
+
+
 @tool("get_file_content")
-async def get_file_content(
-    owner: str, repo: str, path: str, state: Annotated[dict, InjectedState]
-) -> str:
-    """Retrieve the content of a file from a GitHub repository.
+async def get_file_content(path: str, state: Annotated[dict, InjectedState]) -> str:
+    """Retrieve the content of a file from the repository under audit.
 
     If path is a folder, returns the list of paths it contains instead.
     """
+    owner, repo = _pinned_repo(state)
+    if not owner or not repo:
+        return _NO_REPO_PINNED
     ledger = state.get("budget")
     refusal = ledger.spend("fetch") if ledger is not None else None
     # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
@@ -46,14 +61,15 @@ async def get_file_content(
 
 @tool("get_repository_tree")
 async def get_repository_tree(
-    owner: str,
-    repo: str,
     state: Annotated[dict, InjectedState],
     tree_sha: str | None = None,
     recursive: bool = False,
     path_filter: str | None = None,
-):
-    """Retrieve the repository tree for a ref or tree SHA."""
+) -> str:
+    """Retrieve a subdirectory tree from the repository under audit."""
+    owner, repo = _pinned_repo(state)
+    if not owner or not repo:
+        return _NO_REPO_PINNED
     ledger = state.get("budget")
     refusal = ledger.spend("tree") if ledger is not None else None
     # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.

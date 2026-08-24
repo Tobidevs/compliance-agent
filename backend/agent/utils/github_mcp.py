@@ -9,6 +9,8 @@ from langchain.tools import tool
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from ..untrusted import DIRECTORY_TAG, FILE_TAG, TREE_TAG, wrap_untrusted
+
 load_dotenv()
 
 
@@ -116,11 +118,13 @@ class GitHubMCPManager:
 
         If path is a folder, returns the list of paths it contains instead.
         """
+        # Model-facing boundary: fetch_path stays typed and verbatim for programmatic
+        # callers, and only the string that reaches the LLM is capped and delimited.
         result = await self.fetch_path(owner=owner, repo=repo, path=path)
         if isinstance(result, DirListing):
             listing = "\n".join(result.entries) or "(empty directory)"
-            return f"{result.path or '/'} (directory)\n\n{listing}"
-        return f"{result.path}\n\n{result.text}"
+            return wrap_untrusted(DIRECTORY_TAG, result.path or "/", listing)
+        return wrap_untrusted(FILE_TAG, result.path, result.text)
 
     async def get_repository_tree(
         self,
@@ -129,7 +133,7 @@ class GitHubMCPManager:
         tree_sha: str | None = None,
         recursive: bool = False,
         path_filter: str | None = None,
-    ):
+    ) -> str:
         """Retrieve the repository tree for a ref or tree SHA."""
         payload = {
             "owner": owner,
@@ -141,25 +145,22 @@ class GitHubMCPManager:
         if path_filter:
             payload["path_filter"] = path_filter
 
+        scope = path_filter or tree_sha or "/"
         async with self.client.session("github") as github_session:
             result = await github_session.call_tool("get_repository_tree", payload)
             if not result.content:
-                return []
+                return wrap_untrusted(TREE_TAG, scope, "(no entries)")
 
             content_text = result.content[0].text
             try:
                 data = json.loads(content_text)
             except json.JSONDecodeError:
                 data = content_text
-            
-            results_array = []
+
+            entries = []
             if isinstance(data, dict) and "tree" in data:
                 for item in data["tree"]:
-                    results_array.append(
-                        {
-                            "path": item.get("path"),
-                            "type": item.get("type"),
-                        }
-                    )
-            
-            return results_array
+                    entries.append(f"{item.get('path')} ({item.get('type')})")
+
+            # Paths are repo-authored strings, so the tree is delimited and capped too.
+            return wrap_untrusted(TREE_TAG, scope, "\n".join(entries) or "(no entries)")

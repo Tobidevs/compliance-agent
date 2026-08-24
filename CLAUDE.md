@@ -44,6 +44,10 @@ Backend requires `backend/.env` with:
 - `LANGSMITH_API_KEY` / `LANGSMITH_ENDPOINT` — tracing
 - `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` (or `LANGFUSE_BASE_URL`) — Langfuse tracing of the LangGraph run (optional; tracing is a no-op if unset). Optional `LANGFUSE_TRACING_ENVIRONMENT` (default `development`).
 - `CHROMA_PERSIST_DIR` — local Chroma path for policy-document RAG (default: `./chroma_db`)
+- `BRAINTRUST_API_KEY` — Braintrust tracing (optional; the app boots and the graph runs without it)
+- `CORS_ALLOW_ORIGINS` — comma-separated allowed browser origins (default: `http://localhost:3000,http://127.0.0.1:3000`)
+- `MAX_FILE_CONTENT_CHARS` — per-tool-result cap on fetched repo content (default: `10000`)
+- `MAX_POLICY_UPLOAD_BYTES` — `/api/upload-policy` size limit (default: 20 MB)
 
 Frontend reads `NEXT_PUBLIC_API_BASE_URL` (defaults to `http://127.0.0.1:8000`).
 
@@ -83,3 +87,5 @@ State flows through `ComplianceAgentState` (`state.py`). Key fields: `framework`
 - `state.py` — `ComplianceAgentState`; `ControlValidation` (`status` PASS/FAIL/PARTIAL/NO_EVIDENCE/ERROR — `ERROR` is runtime-only and never emitted by the model, `severity`, `confidence`, `findings`, `evidence_snippets`); `EvidenceResult`.
 - `resilience.py` — sentinel `ControlValidation`/`EvidenceResult` builders, the shared cluster semaphore, and the LLM retry/timeout knobs.
 - `prompts.py` — sub-agent system prompts. `tools.py` — `think`, `conclude_evidence`, `finished_gathering_evidence` plus GitHub/RAG search. `clusters.py` — grouping + evidence merge logic.
+- `untrusted.py` — truncation + `<untrusted_*>` delimiting for everything read out of the audited repo. The repo is attacker-controlled relative to the auditor, so any new path that puts repo bytes in front of a model must go through `wrap_untrusted`. The evidence tools take **no `owner`/`repo` argument**: the repo is pinned from graph state (`repo_owner`/`repo_name`) via `InjectedState` in `subagent_nodes.py`.
+- `app/redaction.py` — `mask_value` (positional, for Braintrust's `set_masking_function`) and `mask_keyword` (for Langfuse's `mask=`). Provider-neutral so redaction survives the Braintrust consolidation.

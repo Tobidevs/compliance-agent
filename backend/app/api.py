@@ -1,13 +1,12 @@
 import json
-import shutil
 import os
+import re
 import tempfile
-from pathlib import Path
 
 from contextlib import nullcontext
 
 import braintrust
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langfuse import get_client
@@ -19,6 +18,14 @@ from .observability import langfuse_enabled, langfuse_trace
 router = APIRouter()
 CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 policy_service = PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
+
+# policy_id keys documents in a shared Chroma collection, so it must be an opaque slug.
+POLICY_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+MAX_POLICY_UPLOAD_BYTES = max(
+    1024, int(os.getenv("MAX_POLICY_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+)
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._ -]")
 
 
 def _format_stream_error(error: Exception) -> str:
@@ -60,10 +67,17 @@ class StreamRequest(BaseModel):
     repo_owner: str
     repo_name: str
 
+def _safe_filename(raw: str | None) -> str:
+    """Store a display name only; the uploader never influences the path we write to."""
+    cleaned = _SAFE_FILENAME_RE.sub("_", (raw or "policy.pdf").strip())
+    return cleaned[:128] or "policy.pdf"
+
+
 @router.post("/upload-policy")
-async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
-    filename = policy_file.filename or "policy.pdf"
-    suffix = Path(filename).suffix or ".pdf"
+async def upload_policy(
+    policy_id: str = Query(..., pattern=POLICY_ID_PATTERN, max_length=64),
+    policy_file: UploadFile = File(...),
+):
     file_path = None
     try:
         header = await policy_file.read(5)
@@ -74,16 +88,26 @@ async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
                 detail="Invalid file format. Please upload a valid PDF file.",
             )
 
+        # Suffix is fixed rather than derived from the uploaded filename, and the body is
+        # streamed so an oversized upload is rejected instead of buffered to disk in full.
         with tempfile.NamedTemporaryFile(
-            prefix="policy_", suffix=suffix, delete=False
+            prefix="policy_", suffix=".pdf", delete=False
         ) as temp_file:
             file_path = temp_file.name
-            shutil.copyfileobj(policy_file.file, temp_file)
+            uploaded_bytes = 0
+            while chunk := await policy_file.read(_UPLOAD_CHUNK_BYTES):
+                uploaded_bytes += len(chunk)
+                if uploaded_bytes > MAX_POLICY_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Policy file exceeds the {MAX_POLICY_UPLOAD_BYTES:,}-byte upload limit.",
+                    )
+                temp_file.write(chunk)
 
         policy_service.add_policy(
             policy_id=policy_id,
             policy_file=file_path,
-            metadata={"filename": policy_file.filename},
+            metadata={"filename": _safe_filename(policy_file.filename)},
         )
     except HTTPException:
         raise

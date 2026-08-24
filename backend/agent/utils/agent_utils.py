@@ -1,6 +1,7 @@
 import json
 
 from ..state import SubAgentInput
+from ..untrusted import LISTING_TAG, wrap_untrusted
 
 
 def _format_points_of_focus(raw) -> str:
@@ -31,7 +32,10 @@ def _build_evidence_user_message(state: SubAgentInput) -> str:
     # A bare string here would render one bullet per character.
     if isinstance(artifact_paths, str):
         artifact_paths = [artifact_paths]
-    full_paths_block = "\n".join(f"  - {p}" for p in artifact_paths)
+    # Filenames are repo-authored, so the root listing is delimited like any fetched file.
+    full_paths_block = wrap_untrusted(
+        LISTING_TAG, "/", "\n".join(f"  - {p}" for p in artifact_paths)
+    )
 
     return f"""REPOSITORY: {state["repo_owner"]}/{state["repo_name"]}
     CLUSTER: {state["cluster_id"]}
@@ -40,7 +44,7 @@ def _build_evidence_user_message(state: SubAgentInput) -> str:
     {controls_block}
 
     FULL ARTIFACT PATH LIST — root directory files and folders in the repo.
-    {full_paths_block}
+{full_paths_block}
     """.strip()
 
 
