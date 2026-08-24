@@ -1,11 +1,12 @@
 import asyncio
 import json
 import os
+from functools import cache
 from typing import Literal
 import braintrust
 from langchain_pinecone._utilities import cosine_similarity
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Send
@@ -19,6 +20,7 @@ from .prompts import (
     POLICY_VALIDATION_PROMPT,
     EVIDENCE_SUBAGENT_SYSTEM_PROMPT,
     VALIDATION_SUBAGENT_SYSTEM_PROMPT,
+    cacheable_system_message,
 )
 from .state import (
     ComplianceAgentState,
@@ -30,12 +32,13 @@ from .state import (
 )
 from .utils.regulation_rag_service import RegulationRAGService, REGULATION_NAMESPACE
 from .utils.policy_rag_service import PolicyRAGService
-from .utils.github_mcp import DirListing, GitHubMCPManager
+from .utils.github_mcp import DirListing, get_github_mcp_manager
 from .utils.agent_utils import (
     _build_evidence_user_message,
     _build_validation_user_message,
 )
 from .subagents import evidence_subagent
+from .subagent_nodes import EVIDENCE_MODEL_ID
 from .budget import BudgetLedger
 from .resilience import (
     DESERIALIZATION_ERRORS,
@@ -55,28 +58,69 @@ from .clusters import (
 
 load_dotenv()
 
-regulation_service = RegulationRAGService(index="compliance-frameworks")
-policy_service = PolicyRAGService(
-    persist_directory=os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-)
+# Everything below is built on first use, never at import. Constructing these eagerly made
+# `import agent.agent` read provider credentials, open a Chroma store on disk, and — via
+# PineconeClient.has_index() — potentially *create* a Pinecone index as an import side effect.
+
+
+@cache
+def get_regulation_service() -> RegulationRAGService:
+    return RegulationRAGService(index="compliance-frameworks")
+
+
+@cache
+def get_policy_service() -> PolicyRAGService:
+    return PolicyRAGService(
+        persist_directory=os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+    )
 
 
 # Provider SDKs back max_retries with exponential backoff + jitter; timeout bounds a hung call.
 _llm_defaults = {"max_retries": LLM_MAX_RETRIES, "timeout": LLM_TIMEOUT_SECONDS}
-
-gpt_model = init_chat_model(model="openai:gpt-5.4-mini", **_llm_defaults)
-haiku_model = init_chat_model(model="anthropic:claude-haiku-4-5", **_llm_defaults)
-sonnet_model = init_chat_model(model="anthropic:claude-sonnet-4-6", **_llm_defaults)
 # Swap providers via env, e.g. VALIDATION_SUBAGENT_MODEL="openai:gpt-5.4-mini".
-validation_model = init_chat_model(
-    model=os.getenv("VALIDATION_SUBAGENT_MODEL", "anthropic:claude-sonnet-4-6"),
-    **_llm_defaults,
-)
-policy_extraction_model = haiku_model.with_structured_output(PolicyExtractionResults)
-policy_validation_model = haiku_model.with_structured_output(PolicyValidationResults)
-compliance_validation_model = validation_model.with_structured_output(ValidationBatch)
+VALIDATION_MODEL_ID = os.getenv("VALIDATION_SUBAGENT_MODEL", "anthropic:claude-sonnet-4-6")
 
-github_mcp_manager = GitHubMCPManager()
+
+@cache
+def get_gpt_model():
+    return init_chat_model(model="openai:gpt-5.4-mini", **_llm_defaults)
+
+
+@cache
+def get_haiku_model():
+    return init_chat_model(model="anthropic:claude-haiku-4-5", **_llm_defaults)
+
+
+@cache
+def get_sonnet_model():
+    return init_chat_model(model="anthropic:claude-sonnet-4-6", **_llm_defaults)
+
+
+@cache
+def get_validation_model():
+    return init_chat_model(model=VALIDATION_MODEL_ID, **_llm_defaults)
+
+
+@cache
+def get_policy_extraction_model():
+    return get_haiku_model().with_structured_output(PolicyExtractionResults)
+
+
+@cache
+def get_policy_validation_model():
+    return get_haiku_model().with_structured_output(PolicyValidationResults)
+
+
+@cache
+def get_compliance_validation_model():
+    return get_validation_model().with_structured_output(ValidationBatch)
+
+
+def _load_controls_for_categories(categories: list[str] | str):
+    """Runs on a worker thread, so the service is built off the event loop too."""
+    return get_regulation_service().get_controls_for_categories(
+        categories=categories, namespace=REGULATION_NAMESPACE
+    )
 
 
 def _normalize_evidence_items(raw_items: list) -> list[EvidenceResult]:
@@ -104,23 +148,20 @@ async def extraction_node(state: ComplianceAgentState):
     )
 
     regulation_task = asyncio.to_thread(
-        regulation_service.get_controls_for_categories,
-        categories=state["category"],
-        namespace=REGULATION_NAMESPACE,
+        _load_controls_for_categories,
+        state["category"],
     )
     policy_task = asyncio.to_thread(
-        policy_service.query_policies,
-        query=policy_query,
-        top_k=5,
+        lambda: get_policy_service().query_policies(query=policy_query, top_k=5)
     )
 
     regulation_results, policy_results = await asyncio.gather(
         regulation_task, policy_task
     )
-    formatted_regulations = regulation_service.format_regulation_results(
+    formatted_regulations = get_regulation_service().format_regulation_results(
         regulation_results
     )
-    formatted_policies = policy_service.format_policy_results(policy_results)
+    formatted_policies = get_policy_service().format_policy_results(policy_results)
 
     return {"regulations": formatted_regulations, "policies": formatted_policies}
 
@@ -128,7 +169,7 @@ async def extraction_node(state: ComplianceAgentState):
 @braintrust.traced(name="policy_validation")
 async def policy_validator_node(state: ComplianceAgentState):
 
-    extracted_policies = policy_extraction_model.invoke(
+    extracted_policies = get_policy_extraction_model().invoke(
         [
             HumanMessage(
                 content=POLICY_EXTRACTION_PROMPT.format(
@@ -149,7 +190,7 @@ async def policy_validator_node(state: ComplianceAgentState):
         ]
     )
 
-    validation_results = policy_validation_model.invoke(
+    validation_results = get_policy_validation_model().invoke(
         [
             HumanMessage(
                 content=POLICY_VALIDATION_PROMPT.format(
@@ -188,7 +229,9 @@ async def invoke_evidence_subagent(state, config: RunnableConfig | None = None):
     ledger = state.get("budget") or BudgetLedger.for_controls(state.get("controls", []))
     try:
         # The semaphore, not the graph, decides how many clusters hit the model at once.
-        async with cluster_slot():
+        # cluster_scope holds one MCP session and one file cache for the whole subagent
+        # run: one handshake per cluster instead of one per tool call.
+        async with cluster_slot(), get_github_mcp_manager().cluster_scope():
             evidence_result = await evidence_subagent.ainvoke(
                 {**state, "budget": ledger},
                 config={
@@ -232,15 +275,11 @@ async def artifact_extractor_node(
         }
     )
 
-    regulation_task = asyncio.to_thread(
-        regulation_service.get_controls_for_categories,
-        categories=categories,
-        namespace=REGULATION_NAMESPACE,
-    )
+    regulation_task = asyncio.to_thread(_load_controls_for_categories, categories)
 
     regulation_hits, root_listing = await asyncio.gather(
         regulation_task,
-        github_mcp_manager.fetch_path(
+        get_github_mcp_manager().fetch_path(
             owner=state["repo_owner"], repo=state["repo_name"], path=""
         ),
     )
@@ -292,7 +331,10 @@ def evidence_subagent_dispatch(
             "budget": BudgetLedger.for_controls(controls),
         }
         subagent_input["messages"] = [
-            SystemMessage(content=EVIDENCE_SUBAGENT_SYSTEM_PROMPT),
+            # ~5k tokens re-sent on every turn of every cluster without a cache breakpoint.
+            cacheable_system_message(
+                EVIDENCE_SUBAGENT_SYSTEM_PROMPT, EVIDENCE_MODEL_ID
+            ),
             HumanMessage(content=_build_evidence_user_message(subagent_input)),
         ]
 
@@ -350,7 +392,10 @@ def validation_subagent_dispatch(
             "category": state.get("category", "N/A"),
         }
         subagent_input["messages"] = [
-            SystemMessage(content=VALIDATION_SUBAGENT_SYSTEM_PROMPT),
+            # One call per cluster, so the breakpoint pays off across clusters, not turns.
+            cacheable_system_message(
+                VALIDATION_SUBAGENT_SYSTEM_PROMPT, VALIDATION_MODEL_ID
+            ),
             HumanMessage(content=_build_validation_user_message(subagent_input)),
         ]
 
@@ -415,7 +460,7 @@ async def invoke_validation_subagent(state, config: RunnableConfig | None = None
     try:
         # The semaphore, not the graph, decides how many clusters hit the model at once.
         async with cluster_slot():
-            raw_response = await compliance_validation_model.ainvoke(state["messages"])
+            raw_response = await get_compliance_validation_model().ainvoke(state["messages"])
         validation_result = _parse_validation_batch(raw_response)
     except GraphRecursionError as error:
         # Called out explicitly: the derived recursion_limit made this reachable.

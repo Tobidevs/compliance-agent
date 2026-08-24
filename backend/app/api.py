@@ -4,6 +4,7 @@ import re
 import tempfile
 
 from contextlib import nullcontext
+from functools import cache
 
 import braintrust
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -17,7 +18,13 @@ from .observability import langfuse_enabled, langfuse_trace
 
 router = APIRouter()
 CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-policy_service = PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
+
+
+@cache
+def get_policy_service() -> PolicyRAGService:
+    """Lazy: building this at import made the app unbootable without Pinecone credentials."""
+    return PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
+
 
 # policy_id keys documents in a shared Chroma collection, so it must be an opaque slug.
 POLICY_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
@@ -104,7 +111,7 @@ async def upload_policy(
                     )
                 temp_file.write(chunk)
 
-        policy_service.add_policy(
+        get_policy_service().add_policy(
             policy_id=policy_id,
             policy_file=file_path,
             metadata={"filename": _safe_filename(policy_file.filename)},

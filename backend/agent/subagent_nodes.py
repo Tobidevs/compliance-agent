@@ -1,5 +1,6 @@
 import json
 import os
+from functools import cache
 from typing import Annotated
 
 import braintrust
@@ -11,6 +12,7 @@ from langgraph.config import get_stream_writer
 from langgraph.prebuilt import InjectedState
 
 from .budget import BudgetLedger
+from .compaction import compact_thread
 from .resilience import (
     DESERIALIZATION_ERRORS,
     LLM_MAX_RETRIES,
@@ -21,11 +23,9 @@ from .resilience import (
 from .tools import conclude_evidence, finished_gathering_evidence, think
 
 from .state import EvidenceResult, SubAgentInput
-from .utils.github_mcp import GitHubMCPManager
+from .utils.github_mcp import get_github_mcp_manager
 
 load_dotenv()
-
-github_mcp_manager = GitHubMCPManager()
 
 
 _NO_REPO_PINNED = (
@@ -51,12 +51,18 @@ async def get_file_content(path: str, state: Annotated[dict, InjectedState]) -> 
     owner, repo = _pinned_repo(state)
     if not owner or not repo:
         return _NO_REPO_PINNED
+    manager = get_github_mcp_manager()
+    # Served from this cluster's cache: no MCP call, so no budget is spent. This is what
+    # lets controls in one category share files instead of re-fetching them each.
+    cached = manager.cached_file_content(owner, repo, path)
+    if cached is not None:
+        return cached
     ledger = state.get("budget")
     refusal = ledger.spend("fetch") if ledger is not None else None
     # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
     if refusal:
         return refusal
-    return await github_mcp_manager.get_file_content(owner=owner, repo=repo, path=path)
+    return await manager.get_file_content(owner=owner, repo=repo, path=path)
 
 
 @tool("get_repository_tree")
@@ -75,7 +81,7 @@ async def get_repository_tree(
     # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
     if refusal:
         return refusal
-    return await github_mcp_manager.get_repository_tree(
+    return await get_github_mcp_manager().get_repository_tree(
         owner=owner,
         repo=repo,
         tree_sha=tree_sha,
@@ -94,12 +100,18 @@ EVIDENCE_TOOLS = [
 ]
 
 # Swap providers via env, e.g. EVIDENCE_SUBAGENT_MODEL="openai:gpt-5.4-mini".
-evidence_model = init_chat_model(
-    model=os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5"),
-    max_retries=LLM_MAX_RETRIES,
-    timeout=LLM_TIMEOUT_SECONDS,
-)
-llm = evidence_model.bind_tools(EVIDENCE_TOOLS)
+EVIDENCE_MODEL_ID = os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5")
+
+
+@cache
+def get_evidence_llm():
+    """Lazy: constructing a chat model at import time reads provider credentials."""
+    evidence_model = init_chat_model(
+        model=EVIDENCE_MODEL_ID,
+        max_retries=LLM_MAX_RETRIES,
+        timeout=LLM_TIMEOUT_SECONDS,
+    )
+    return evidence_model.bind_tools(EVIDENCE_TOOLS)
 
 
 def _parse_tool_content(content):
@@ -202,7 +214,8 @@ async def gather_evidence_node(state: SubAgentInput):
     # Runs before every tool batch, so the per-control counters track the current control.
     ledger.sync_progress(state["messages"])
 
-    response = await llm.ainvoke(state["messages"])
+    # State keeps the full thread; only what the model is billed for is compacted.
+    response = await get_evidence_llm().ainvoke(compact_thread(state["messages"]))
 
     # search_paths = ", ".join(
     #     f"/{tool_call['args'].get('path', '')}"
