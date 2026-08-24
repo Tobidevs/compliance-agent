@@ -1,9 +1,6 @@
 
 from .state import EvidenceResult
 
-PRIORITY_PATH_CAP = 10
-
-
 def group_controls_into_clusters(
     regulations: list[dict],
 ) -> dict[str, list[dict]]:
@@ -47,23 +44,3 @@ def update_clusters_with_evidence(
                     "no_evidence_found": matching_evidence.no_evidence_found,
                 }
     return clusters
-
-    
-
-
-def filter_paths_for_cluster(artifact_paths: list[str], keywords: list[str]) -> list[str]:
-    """
-    Scores each artifact path by keyword overlap with the cluster domain.
-    Returns top-N ranked paths. Falls back to first 10 paths if no matches.
-    This keeps each sub-agent's 'where to look first' list tight and relevant.
-    """
-    scored = []
-    for path in artifact_paths:
-        path_lower = path.lower()
-        score = sum(1 for kw in keywords if kw in path_lower)
-        if score > 0:
-            scored.append((score, path))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    priority = [path for _, path in scored[:PRIORITY_PATH_CAP]]
-    return priority if priority else artifact_paths[:10]

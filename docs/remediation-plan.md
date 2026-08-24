@@ -27,7 +27,10 @@ in-flight run and loses all work.
 | 2 — Resilience & reconciliation | done | `33b2164` |
 | 3 — Security hardening | done | `b7fe991` |
 | 4 — Cost & latency | done | `9a31db4` |
-| 5 — Tests, cleanup, observability | in progress | — |
+| 5 — Tests, cleanup, observability | **paused** — 5.3 done, 5.1/5.2/5.4/5.5/5.6 remain | partial |
+
+Phase 5 was paused mid-execution. 5.3 (dead code) is committed; **resume at 5.2**
+(Braintrust consolidation), then 5.1/5.4/5.5/5.6.
 
 Phases 1+ live on the `remediation` branch, pushed to `origin/remediation`.
 `main` is frozen at Phase 0.

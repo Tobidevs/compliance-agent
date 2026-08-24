@@ -2,22 +2,18 @@ import asyncio
 import json
 import os
 from functools import cache
-from typing import Literal
+
 import braintrust
-from langchain_pinecone._utilities import cosine_similarity
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Send
 from langgraph.config import get_stream_writer
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 
 from .prompts import (
-    POLICY_EXTRACTION_PROMPT,
-    POLICY_VALIDATION_PROMPT,
     EVIDENCE_SUBAGENT_SYSTEM_PROMPT,
     VALIDATION_SUBAGENT_SYSTEM_PROMPT,
     cacheable_system_message,
@@ -26,12 +22,9 @@ from .state import (
     ComplianceAgentState,
     ControlValidation,
     EvidenceResult,
-    PolicyExtractionResults,
-    PolicyValidationResults,
     ValidationBatch,
 )
 from .utils.regulation_rag_service import RegulationRAGService, REGULATION_NAMESPACE
-from .utils.policy_rag_service import PolicyRAGService
 from .utils.github_mcp import DirListing, get_github_mcp_manager
 from .utils.agent_utils import (
     _build_evidence_user_message,
@@ -50,11 +43,7 @@ from .resilience import (
     no_evidence_validation,
     normalize_regulation_id,
 )
-from .clusters import (
-    group_controls_into_clusters,
-    filter_paths_for_cluster,
-    update_clusters_with_evidence,
-)
+from .clusters import group_controls_into_clusters, update_clusters_with_evidence
 
 load_dotenv()
 
@@ -68,13 +57,6 @@ def get_regulation_service() -> RegulationRAGService:
     return RegulationRAGService(index="compliance-frameworks")
 
 
-@cache
-def get_policy_service() -> PolicyRAGService:
-    return PolicyRAGService(
-        persist_directory=os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-    )
-
-
 # Provider SDKs back max_retries with exponential backoff + jitter; timeout bounds a hung call.
 _llm_defaults = {"max_retries": LLM_MAX_RETRIES, "timeout": LLM_TIMEOUT_SECONDS}
 # Swap providers via env, e.g. VALIDATION_SUBAGENT_MODEL="openai:gpt-5.4-mini".
@@ -82,33 +64,8 @@ VALIDATION_MODEL_ID = os.getenv("VALIDATION_SUBAGENT_MODEL", "anthropic:claude-s
 
 
 @cache
-def get_gpt_model():
-    return init_chat_model(model="openai:gpt-5.4-mini", **_llm_defaults)
-
-
-@cache
-def get_haiku_model():
-    return init_chat_model(model="anthropic:claude-haiku-4-5", **_llm_defaults)
-
-
-@cache
-def get_sonnet_model():
-    return init_chat_model(model="anthropic:claude-sonnet-4-6", **_llm_defaults)
-
-
-@cache
 def get_validation_model():
     return init_chat_model(model=VALIDATION_MODEL_ID, **_llm_defaults)
-
-
-@cache
-def get_policy_extraction_model():
-    return get_haiku_model().with_structured_output(PolicyExtractionResults)
-
-
-@cache
-def get_policy_validation_model():
-    return get_haiku_model().with_structured_output(PolicyValidationResults)
 
 
 @cache
@@ -137,78 +94,6 @@ def _normalize_evidence_items(raw_items: list) -> list[EvidenceResult]:
             # A malformed item is dropped here and backfilled by reconciliation.
             continue
     return normalized
-
-
-@braintrust.traced(name="extraction")
-async def extraction_node(state: ComplianceAgentState):
-
-    policy_query = (
-        f"Retrieve compliance policies relevant to {state['framework']}"
-        f"and category {state['category']}."
-    )
-
-    regulation_task = asyncio.to_thread(
-        _load_controls_for_categories,
-        state["category"],
-    )
-    policy_task = asyncio.to_thread(
-        lambda: get_policy_service().query_policies(query=policy_query, top_k=5)
-    )
-
-    regulation_results, policy_results = await asyncio.gather(
-        regulation_task, policy_task
-    )
-    formatted_regulations = get_regulation_service().format_regulation_results(
-        regulation_results
-    )
-    formatted_policies = get_policy_service().format_policy_results(policy_results)
-
-    return {"regulations": formatted_regulations, "policies": formatted_policies}
-
-
-@braintrust.traced(name="policy_validation")
-async def policy_validator_node(state: ComplianceAgentState):
-
-    extracted_policies = get_policy_extraction_model().invoke(
-        [
-            HumanMessage(
-                content=POLICY_EXTRACTION_PROMPT.format(
-                    regulations="\n\n".join(
-                        [
-                            f"{reg['title']} ({reg['control_id']}): {reg['requirement']}"
-                            for reg in state["regulations"]
-                        ]
-                    ),
-                    excerpts="\n\n".join(
-                        [
-                            f"Policy Excerpt {i+1}: {policy['content']}"
-                            for i, policy in enumerate(state["policies"])
-                        ]
-                    ),
-                )
-            )
-        ]
-    )
-
-    validation_results = get_policy_validation_model().invoke(
-        [
-            HumanMessage(
-                content=POLICY_VALIDATION_PROMPT.format(
-                    extraction_results="\n\n".join(
-                        [
-                            f" - Regulation {res.regulation_id}: {res.title} - {res.regulation_requirement}\nExcerpt: {res.excerpt or 'No matching claim found'}"
-                            for res in extracted_policies.results
-                        ]
-                    )
-                )
-            )
-        ]
-    )
-
-    return {
-        "policy_validation_results": validation_results.results,
-        "policy_excerpts": [res.model_dump() for res in extracted_policies.results],
-    }
 
 
 def _record_cluster_failure(cluster_id: str, stage: str, error: BaseException) -> dict:
