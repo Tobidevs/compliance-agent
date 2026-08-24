@@ -26,7 +26,7 @@ in-flight run and loses all work.
 | 1 — Budget enforcement | done | `27b503a` |
 | 2 — Resilience & reconciliation | done | `33b2164` |
 | 3 — Security hardening | done | `b7fe991` |
-| 4 — Cost & latency | in progress | — |
+| 4 — Cost & latency | done | `9a31db4` |
 | 5 — Tests, cleanup, observability | queued | — |
 
 Phases 1+ live on the `remediation` branch, pushed to `origin/remediation`.
@@ -395,7 +395,7 @@ and there is no upload size cap. Add both.
 
 # Phase 4 — Cost & latency
 
-**In progress.**
+**Completed — `9a31db4`.**
 
 ### 4.1 — Persistent MCP session
 `backend/agent/utils/github_mcp.py` — every method opens
