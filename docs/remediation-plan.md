@@ -192,14 +192,23 @@ prompt to match.
 ### 1.4 — Derive `recursion_limit` from the budget
 `backend/agent/nodes.py:151` (`invoke_evidence_subagent`)
 
-LangGraph 1.1.8 defaults `recursion_limit` to 25. The loop is 2 steps per turn (~12
-turns). An 8-control cluster needs roughly 3–4 turns per control — 24–32 turns — so
-`GraphRecursionError` on the largest cluster is close to guaranteed, unhandled, and
-kills the entire run.
+**CORRECTED 2026-08-23 — the original audit had this backwards.** LangGraph 1.1.8
+defaults `recursion_limit` to **10007** (`DEFAULT_RECURSION_LIMIT`,
+`langgraph/_internal/_config.py:31`), not 25; 25 was the 0.x default. Verified against
+the installed package. `GraphRecursionError` was therefore *not* near-guaranteed — the
+opposite is true: the evidence subagent had **no practical ceiling**, so a stuck loop
+would burn thousands of Haiku turns before anything stopped it.
 
-Set an explicit limit on the subagent invoke derived from the ledger, e.g.
-`2 * (fetches_max + trees_max + len(controls) + 2)`. The enforced budget, not an
-arbitrary constant, becomes the terminating condition.
+Set an explicit limit on the subagent invoke derived from the ledger. Implemented as
+`2 * (fetches_max + trees_max + 2 * len(control_ids) + 4)` — 120 for 8 controls against
+a measured serial worst case of 115. The `+ 2 * len(control_ids)` term budgets one
+refused-call turn per control, since a refusal consumes a turn without consuming budget.
+The enforced budget, not an arbitrary constant, becomes the terminating condition.
+
+**Risk this transfers to Phase 2.1:** setting a real limit *introduces* a
+`GraphRecursionError` path that effectively did not exist before. Until 2.1 wraps the
+`Send` targets in error handling, that error still kills the entire run. Do 2.1
+promptly.
 
 ### 1.5 — Rewrite the budget section of the system prompt
 `backend/agent/prompts.py:48`
@@ -241,6 +250,11 @@ event with all work lost.
 
 Fix: wrap each in try/except. On failure, emit a sentinel result covering that
 cluster's controls rather than propagating. One bad cluster must not kill a run.
+
+**Elevated priority after Phase 1.** Phase 1.4 set a real `recursion_limit` (~120 for an
+8-control cluster) where the effective ceiling used to be 10007. That is the correct
+change, but it means `GraphRecursionError` is now a reachable outcome rather than a
+theoretical one — and it is currently unhandled. This item closes that gap.
 
 ### 2.2 — Guard the deserialization boundaries
 - `backend/agent/subagent_nodes.py:71` — `EvidenceResult(**raw_result)` raises
