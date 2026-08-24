@@ -123,14 +123,12 @@ def gather_evidence_node(state: SubAgentInput):
 
 
 def is_finished(state: SubAgentInput):
-
-    last_message = state["messages"][
-        -1
-    ]  # todo reactor to check the entire tool call list
-
-    # ToolNode returns ToolMessages
-    if last_message.type == "tool":
-        if last_message.name == "finished_gathering_evidence":
+    # ToolNode emits one ToolMessage per parallel tool call, so the terminate signal
+    # is not necessarily last: scan the whole trailing run of ToolMessages.
+    for message in reversed(state["messages"]):
+        if getattr(message, "type", None) != "tool":
+            break
+        if getattr(message, "name", None) == "finished_gathering_evidence":
             return "process_evidence"
 
     return "gather_evidence"

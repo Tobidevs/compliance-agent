@@ -28,7 +28,7 @@ from .state import (
 )
 from .utils.regulation_rag_service import RegulationRAGService, REGULATION_NAMESPACE
 from .utils.policy_rag_service import PolicyRAGService
-from .utils.github_mcp import GitHubMCPManager
+from .utils.github_mcp import DirListing, GitHubMCPManager
 from .utils.agent_utils import (
     _build_evidence_user_message,
     _build_validation_user_message,
@@ -190,11 +190,18 @@ async def artifact_extractor_node(
         namespace=REGULATION_NAMESPACE,
     )
 
-    regulation_hits, file_paths = await asyncio.gather(
+    regulation_hits, root_listing = await asyncio.gather(
         regulation_task,
-        github_mcp_manager.get_file_content(
+        github_mcp_manager.fetch_path(
             owner=state["repo_owner"], repo=state["repo_name"], path=""
         ),
+    )
+
+    # artifact_paths is list[str]; a non-directory root degrades to its own path.
+    file_paths = (
+        root_listing.entries
+        if isinstance(root_listing, DirListing)
+        else [root_listing.path]
     )
 
     regulations = list(regulation_hits)
@@ -346,4 +353,6 @@ def combine_validation_results(state: ComplianceAgentState):
         }
     )
 
-    return {"validation_results": all_results}
+    # validation_results uses operator.add: invoke_validation_subagent already appended
+    # every batch, so returning the accumulated list here would double every result.
+    return {}

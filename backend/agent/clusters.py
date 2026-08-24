@@ -8,10 +8,10 @@ def group_controls_into_clusters(
     regulations: list[dict],
 ) -> dict[str, list[dict]]:
     """
-    Groups regulation + excerpt pairs into predefined clusters by control ID prefix.
-    Unmatched controls fall into 'misc' so nothing is silently dropped.
+    Groups controls into clusters keyed by their `category` metadata field.
+    Controls with a missing or blank category fall into 'misc' so nothing is dropped.
     """
-    result = {}
+    result: dict[str, list[dict]] = {}
 
     for reg in regulations:
         reg_id = reg.get("control_id", "")
@@ -21,8 +21,10 @@ def group_controls_into_clusters(
             "requirement": reg.get("requirement") or reg.get("criterion_text", ""),
             "points_of_focus": reg.get("points_of_focus", ""),
         }
-        result[reg.get("category", "misc")] = result.get(reg.get("category", "misc"), []) + [control]
-        
+        # Blank/whitespace categories would otherwise create an unnamed "" cluster.
+        cluster_id = str(reg.get("category") or "").strip() or "misc"
+        result.setdefault(cluster_id, []).append(control)
+
     return result
 
 def update_clusters_with_evidence(

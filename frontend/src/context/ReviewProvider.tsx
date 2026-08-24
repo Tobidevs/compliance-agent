@@ -91,6 +91,8 @@ export function ReviewProvider({ children }: { children: React.ReactNode }) {
   // token events); it is not surfaced in this layout but kept for parity.
   const tokenBufferRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
+  // Mirrors validationResults so progressive merges avoid side effects in a state updater.
+  const validationResultsRef = useRef<ControlValidation[]>([]);
 
   const metrics = useMemo(() => computeMetrics(validationResults), [validationResults]);
   const sortedResults = metrics.sorted;
@@ -122,6 +124,26 @@ export function ReviewProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const resetResults = useCallback(() => {
+    validationResultsRef.current = [];
+    setValidationResults([]);
+    setRawValidationJson("");
+  }, []);
+
+  // Each `updates` event carries only the batch for one cluster, so upsert by
+  // regulation_id instead of replacing — the dashboard then fills in progressively.
+  const mergeValidationResults = useCallback((incoming: ControlValidation[]) => {
+    if (!incoming.length) return;
+    const merged = new Map(
+      validationResultsRef.current.map((control) => [control.regulation_id, control]),
+    );
+    for (const control of incoming) merged.set(control.regulation_id, control);
+    const next = Array.from(merged.values());
+    validationResultsRef.current = next;
+    setValidationResults(next);
+    setRawValidationJson(JSON.stringify(next, null, 2));
+  }, []);
+
   // Auto-clear transient errors.
   useEffect(() => {
     if (!errorMessage) return;
@@ -146,15 +168,14 @@ export function ReviewProvider({ children }: { children: React.ReactNode }) {
 
   const startNewReview = useCallback(() => {
     abortRef.current?.abort();
-    setValidationResults([]);
-    setRawValidationJson("");
+    resetResults();
     setSelectedControlId("");
     setSearch("");
     setStatus("");
     setStatusTick(0);
     setLoading(false);
     router.push("/");
-  }, [router]);
+  }, [resetResults, router]);
 
   const runComplianceAgent = useCallback(
     async (request: ReviewRequest) => {
@@ -178,8 +199,7 @@ export function ReviewProvider({ children }: { children: React.ReactNode }) {
               tokenBufferRef.current += token;
             },
             onUpdate: (normalized) => {
-              setValidationResults(normalized);
-              setRawValidationJson(JSON.stringify(normalized, null, 2));
+              mergeValidationResults(normalized);
             },
             onError: (message) => {
               resetToFormWithError(message);
@@ -199,13 +219,12 @@ export function ReviewProvider({ children }: { children: React.ReactNode }) {
         resetToFormWithError(message);
       }
     },
-    [resetToFormWithError, router],
+    [mergeValidationResults, resetToFormWithError, router],
   );
 
   const submitReview = useCallback(() => {
     if (!ready) return;
-    setValidationResults([]);
-    setRawValidationJson("");
+    resetResults();
     setSelectedControlId("");
     setStatus("");
     setStatusTick(0);
@@ -218,7 +237,17 @@ export function ReviewProvider({ children }: { children: React.ReactNode }) {
       repo_owner: repoOwner,
       repo_name: repoName,
     });
-  }, [ready, framework, category, scopes, repoOwner, repoName, router, runComplianceAgent]);
+  }, [
+    ready,
+    framework,
+    category,
+    scopes,
+    repoOwner,
+    repoName,
+    resetResults,
+    router,
+    runComplianceAgent,
+  ]);
 
   // Keep the URL honest: if the user deep-links to /run or /results without a
   // run in flight or any results, send them back to the form.

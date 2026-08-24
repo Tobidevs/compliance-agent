@@ -92,26 +92,28 @@ class RegulationRAGService:
     def format_regulation_results(self, results):
         formatted_results = []
         for result in results:
+            # Metadata drift in the index must degrade a field, not kill the run.
+            fields = getattr(result, "fields", None) or {}
             formatted_results.append(
                     {
-                        "framework": result.fields["framework"],
-                        "control_family": result.fields["control_family"],
-                        "control_id": result.fields["control_id"],
-                        "category": result.fields["category"],
-                        "title": result.fields["title"],
+                        "framework": fields.get("framework", ""),
+                        "control_family": fields.get("control_family", ""),
+                        "control_id": fields.get("control_id", ""),
+                        "category": fields.get("category", ""),
+                        "title": fields.get("title", ""),
                         # `criterion_text` / `testing_approach` are the v3 index field
                         # names; we map them back to the stable internal keys the rest of
                         # the pipeline consumes (requirement / testing_criteria).
-                        "requirement": result.fields["criterion_text"],
-                        "points_of_focus": result.fields["points_of_focus"],
-                        "source_code_relevance": result.fields["source_code_relevance"],
-                        "policy_assertion": (result.fields["policy_assertion"] if "policy_assertion" in result.fields else None),
-                        "keywords": result.fields["keywords"],
-                        "artifact_types": result.fields["artifact_types"],
-                        "testing_criteria": result.fields["testing_approach"],
-                        "evidence_indicator": result.fields["evidence_indicators"],
-                        "source_code_signal": result.fields["source_code_signal"],
-                        "severity": result.fields["severity"]
+                        "requirement": fields.get("criterion_text", ""),
+                        "points_of_focus": fields.get("points_of_focus", ""),
+                        "source_code_relevance": fields.get("source_code_relevance", ""),
+                        "policy_assertion": fields.get("policy_assertion"),
+                        "keywords": fields.get("keywords", ""),
+                        "artifact_types": fields.get("artifact_types", ""),
+                        "testing_criteria": fields.get("testing_approach", ""),
+                        "evidence_indicator": fields.get("evidence_indicators", ""),
+                        "source_code_signal": fields.get("source_code_signal", ""),
+                        "severity": fields.get("severity", ""),
                     }
                 )
         return formatted_results

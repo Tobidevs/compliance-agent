@@ -27,7 +27,11 @@ def _build_evidence_user_message(state: SubAgentInput) -> str:
         _build_control_block(c) for c in state["controls"]
     )
 
-    full_paths_block = "\n".join(f"  - {p}" for p in state["artifact_paths"])
+    artifact_paths = state.get("artifact_paths") or []
+    # A bare string here would render one bullet per character.
+    if isinstance(artifact_paths, str):
+        artifact_paths = [artifact_paths]
+    full_paths_block = "\n".join(f"  - {p}" for p in artifact_paths)
 
     return f"""REPOSITORY: {state["repo_owner"]}/{state["repo_name"]}
     CLUSTER: {state["cluster_id"]}

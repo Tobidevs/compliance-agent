@@ -123,9 +123,10 @@ async def build_dataset() -> list[dict]:
     for repo in EVAL_REPOS:
         framework = repo["framework"]
         # Root file listing — fetched once per repo, shared across that repo's categories.
-        artifact_paths = await github_mcp_manager.get_file_content(
+        root_listing = await github_mcp_manager.fetch_path(
             owner=repo["repo_owner"], repo=repo["repo_name"], path=""
         )
+        artifact_paths = getattr(root_listing, "entries", [root_listing.path])
 
         for category in repo["source_code_categories"]:
             controls = await _retrieve_controls_for_category(framework, category)

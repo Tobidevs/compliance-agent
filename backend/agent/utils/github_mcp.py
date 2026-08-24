@@ -7,8 +7,23 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain.tools import tool
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 load_dotenv()
+
+
+class DirListing(BaseModel):
+    """A directory at `path` and the repo-relative paths it contains."""
+
+    path: str
+    entries: list[str]
+
+
+class FileContent(BaseModel):
+    """A single file at `path` and its raw text."""
+
+    path: str
+    text: str
 
 
 class GitHubMCPManager:
@@ -65,34 +80,47 @@ class GitHubMCPManager:
             print(f"Error during code search: {e}")
             return []
 
-    async def get_file_content(self, owner: str, repo: str, path: str):
-        """Retrieve the content of a file from a GitHub repository."""
+    async def fetch_path(
+        self, owner: str, repo: str, path: str
+    ) -> DirListing | FileContent:
+        """Fetch a repo path, normalized to exactly one of DirListing or FileContent."""
         async with self.client.session("github") as github_session:
             result = await github_session.call_tool(
                 "get_file_contents", {"owner": owner, "repo": repo, "path": path}
             )
             if len(result.content) > 1 and result.content[1]:
-                return f"{path}\n\n{result.content[1].resource.text}"
-            else:
-                content_text = result.content[0].text
-                try:
-                    data = json.loads(content_text)
-                except json.JSONDecodeError:
-                    return f"{path}\n\n{content_text}"
+                return FileContent(
+                    path=path, text=result.content[1].resource.text
+                )
 
-                if not isinstance(data, list):
-                    return data
+            content_text = result.content[0].text
+            try:
+                data = json.loads(content_text)
+            except json.JSONDecodeError:
+                return FileContent(path=path, text=content_text)
 
-                results_array = []
-                for item in data:
-                    results_array.append(
-                        {
-                            "name": item.get("name"),
-                            "entry_type": item.get("type"),
-                            "path": item.get("path"),
-                        }
-                    )
-                return results_array
+            if not isinstance(data, list):
+                return FileContent(path=path, text=content_text)
+
+            entries = []
+            for item in data:
+                entry = item.get("path") or item.get("name")
+                if not entry:
+                    continue
+                # Trailing slash preserves the file/dir distinction the old dict carried.
+                entries.append(f"{entry}/" if item.get("type") == "dir" else entry)
+            return DirListing(path=path, entries=entries)
+
+    async def get_file_content(self, owner: str, repo: str, path: str) -> str:
+        """Retrieve the content of a file from a GitHub repository.
+
+        If path is a folder, returns the list of paths it contains instead.
+        """
+        result = await self.fetch_path(owner=owner, repo=repo, path=path)
+        if isinstance(result, DirListing):
+            listing = "\n".join(result.entries) or "(empty directory)"
+            return f"{result.path or '/'} (directory)\n\n{listing}"
+        return f"{result.path}\n\n{result.text}"
 
     async def get_repository_tree(
         self,
