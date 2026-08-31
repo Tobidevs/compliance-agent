@@ -1,5 +1,5 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
 import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader

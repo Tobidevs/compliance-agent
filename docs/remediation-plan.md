@@ -17,6 +17,21 @@ in-flight run and loses all work.
 - One-line comments only. No verbose comment blocks.
 - Backend venv: `cd backend && source .venv/bin/activate`.
 
+
+## Execution status
+
+| Phase | State | Commit |
+|---|---|---|
+| 0 — Correctness | done | `9b6d9da` (on `main`) |
+| 1 — Budget enforcement | done | `27b503a` |
+| 2 — Resilience & reconciliation | done | `33b2164` |
+| 3 — Security hardening | done | `b7fe991` |
+| 4 — Cost & latency | done | `9a31db4` |
+| 5 — Tests, cleanup, observability | done | `ddca10d` (5.3), `153fb7b` (5.2/5.4/5.5), `78c6224` (5.1/5.6) |
+
+All six phases are complete. Phases 1+ live on the `remediation` branch, pushed to
+`origin/remediation`. `main` is frozen at Phase 0.
+
 ---
 
 ## Architecture decision: keep the per-category work unit
@@ -192,14 +207,23 @@ prompt to match.
 ### 1.4 — Derive `recursion_limit` from the budget
 `backend/agent/nodes.py:151` (`invoke_evidence_subagent`)
 
-LangGraph 1.1.8 defaults `recursion_limit` to 25. The loop is 2 steps per turn (~12
-turns). An 8-control cluster needs roughly 3–4 turns per control — 24–32 turns — so
-`GraphRecursionError` on the largest cluster is close to guaranteed, unhandled, and
-kills the entire run.
+**CORRECTED 2026-08-23 — the original audit had this backwards.** LangGraph 1.1.8
+defaults `recursion_limit` to **10007** (`DEFAULT_RECURSION_LIMIT`,
+`langgraph/_internal/_config.py:31`), not 25; 25 was the 0.x default. Verified against
+the installed package. `GraphRecursionError` was therefore *not* near-guaranteed — the
+opposite is true: the evidence subagent had **no practical ceiling**, so a stuck loop
+would burn thousands of Haiku turns before anything stopped it.
 
-Set an explicit limit on the subagent invoke derived from the ledger, e.g.
-`2 * (fetches_max + trees_max + len(controls) + 2)`. The enforced budget, not an
-arbitrary constant, becomes the terminating condition.
+Set an explicit limit on the subagent invoke derived from the ledger. Implemented as
+`2 * (fetches_max + trees_max + 2 * len(control_ids) + 4)` — 120 for 8 controls against
+a measured serial worst case of 115. The `+ 2 * len(control_ids)` term budgets one
+refused-call turn per control, since a refusal consumes a turn without consuming budget.
+The enforced budget, not an arbitrary constant, becomes the terminating condition.
+
+**Risk this transfers to Phase 2.1:** setting a real limit *introduces* a
+`GraphRecursionError` path that effectively did not exist before. Until 2.1 wraps the
+`Send` targets in error handling, that error still kills the entire run. Do 2.1
+promptly.
 
 ### 1.5 — Rewrite the budget section of the system prompt
 `backend/agent/prompts.py:48`
@@ -241,6 +265,11 @@ event with all work lost.
 
 Fix: wrap each in try/except. On failure, emit a sentinel result covering that
 cluster's controls rather than propagating. One bad cluster must not kill a run.
+
+**Elevated priority after Phase 1.** Phase 1.4 set a real `recursion_limit` (~120 for an
+8-control cluster) where the effective ceiling used to be 10007. That is the correct
+change, but it means `GraphRecursionError` is now a reachable outcome rather than a
+theoretical one — and it is currently unhandled. This item closes that gap.
 
 ### 2.2 — Guard the deserialization boundaries
 - `backend/agent/subagent_nodes.py:71` — `EvidenceResult(**raw_result)` raises
@@ -313,7 +342,7 @@ Convert both to `async def` with `await ...ainvoke(...)`.
 
 # Phase 3 — Security hardening
 
-**Not yet scheduled for execution.** Deferred until Phases 0–2 land.
+**Completed — `b7fe991`.**
 
 ### 3.1 — Pin `owner` / `repo` server-side
 `backend/agent/utils/github_mcp.py:68,97`
@@ -366,7 +395,7 @@ and there is no upload size cap. Add both.
 
 # Phase 4 — Cost & latency
 
-**Not yet scheduled for execution.**
+**Completed — `9a31db4`.**
 
 ### 4.1 — Persistent MCP session
 `backend/agent/utils/github_mcp.py` — every method opens
@@ -445,3 +474,122 @@ Remove `backend/app/observability.py`, the Langfuse `CallbackHandler` wiring in
 the harness uses `query_regulations(top_k=10, rerank_top_k=4)` while production uses the
 exhaustive `get_controls_for_categories`. The eval currently measures a system that is
 not the one being run. Align both.
+
+### 5.5 — Loose ends accumulated during Phases 0–4
+
+Found while executing earlier phases; none belonged to the phase that surfaced them.
+
+- **`requirements.txt` cannot produce a working install.** Missing `mcp`,
+  `langchain-mcp-adapters`, `langchain-pinecone`, `langchain-openai`,
+  `langchain-anthropic`. A clean checkout cannot import `agent.agent`. If 5.3 removes
+  the dead `cosine_similarity` import, `langchain-pinecone` drops out entirely — it
+  pins `pinecone<8.0.0` against the repo's `pinecone==8.1.2`, so removing it also
+  resolves a real version conflict.
+- **`_format_stream_error` leaks raw exception text** (`backend/app/api.py:24`) into the
+  SSE `error` event. Unrecognized errors fall through to
+  `f"Compliance agent failed: {raw_message}"`, which can carry internal paths, model
+  ids, or upstream API detail to the browser. Return a generic message and log the
+  detail server-side.
+- **`backend/evals/run_evals.py` calls `Eval(...)` at module scope**, attempting a
+  Braintrust network login on import. It cannot be imported without valid credentials,
+  and it fired an unintended 401 during Phase 1 verification. Move the call behind
+  `if __name__ == "__main__":`.
+- **Three pre-existing `react-hooks` lint errors** in `frontend/src/components/compliance/Donut.tsx`,
+  `ThemeProvider.tsx`, and `useReveal.ts`. Latent before this work; surfaced only once
+  Phase 0 repaired the ESLint config. Not blocking, but they are the only lint failures
+  left in the repo.
+- **Unused lazy accessors** `get_gpt_model` / `get_sonnet_model` and dead imports in
+  `backend/agent/utils/github_mcp.py`, both left by Phase 4's lazy-accessor refactor.
+
+### 5.6 — Tests promoted from earlier phases
+
+Each phase deferred its tests to 5.1 by convention. These were explicitly recommended
+for promotion to permanent tests by the agent that wrote the code, because each guards
+an invariant that regresses **silently** — a passing diff review would not catch any of
+them:
+
+1. **Reconciliation count** (Phase 2) — `len(validation_results)` equals the requested
+   control count. Enforced by an interaction across `_align_validations`, both dispatch
+   fall-throughs, and `reconcile_validation_results`. The property that makes a
+   compliance report trustworthy.
+2. **`owner`/`repo` absent from the generated tool schema** (Phase 3) — assert against
+   `convert_to_openai_tool(...)` output, not the source. Re-adding a parameter reopens
+   arbitrary-repo access through the PAT.
+3. **Fetched content arrives `wrap_untrusted`-delimited with a defanged closing tag**
+   (Phase 3).
+4. **A cache hit is delimited too** (Phase 4) — the live regression path is someone
+   adding a raw-bytes cache accessor.
+5. **`compact_thread` preserves message count and never leaves content without its
+   wrapper** (Phase 4) — guards both provider rejection (orphaned `tool_use` block) and
+   the unwrap failure.
+6. **Cache hits do not decrement the ledger** (Phase 4) — cost, not safety. Lower
+   priority than the rest.
+
+---
+
+# Closing summary
+
+## What the six phases changed
+
+**Phase 0 — Correctness.** Stopped the pipeline producing wrong reports: the
+`validation_results` reducer no longer double-appends every result; `is_finished` scans the
+whole trailing `ToolMessage` batch instead of only the last one, so a parallel tool call
+can no longer hide the terminate signal; `get_file_content` returns a typed
+`DirListing | FileContent` instead of three shapes (the `str` branch was rendering one
+prompt bullet *per character*); `format_regulation_results` tolerates metadata drift; and
+the frontend accumulates progressive results by `regulation_id` instead of overwriting.
+
+**Phase 1 — Budget enforcement.** Replaced a prompt-only, self-contradictory,
+model-graded budget with a real runtime ledger (`agent/budget.py`) sized from cluster width
+(3 fetches / 2 trees per control). Exhausted calls are refused at the tool boundary and
+never reach the MCP client, so per-run cost is bounded rather than advisory. `think` now
+*reports* the server-computed remainder instead of accepting it from the model, and
+`recursion_limit` is derived from the ledger — LangGraph 1.1.8 defaults to 10007, so the
+subagent previously had no practical ceiling.
+
+**Phase 2 — Resilience & reconciliation.** Both `Send` fan-outs isolate their failures and
+degrade to sentinels, deserialization boundaries are guarded, and an `ERROR` status now
+exists to represent "we failed to assess this." The reconciliation node left-joins the full
+requested roster against what the validators produced and backfills anything missing, so a
+compliance report can no longer silently omit a control. Retries, timeouts and a
+concurrency cap were added, and the LLM nodes made async.
+
+**Phase 3 — Security hardening.** `owner`/`repo` are pinned from graph state and removed
+from the LLM-facing tool schema, closing arbitrary-repo access through the PAT. Fetched
+content is size-capped and wrapped in `<untrusted_*>` delimiters that it cannot forge its
+way out of. `BRAINTRUST_API_KEY` became optional, CORS was narrowed and moved to env, and
+`/api/upload-policy` gained slug validation and a size cap.
+
+**Phase 4 — Cost & latency.** One MCP session and one file cache per cluster (replacing
+~150 handshakes per run), thread compaction after each conclusion, Anthropic prompt-cache
+breakpoints, a TTL-cached control corpus with batched embeddings, and the removal of
+import-time side effects — `PineconeClient.__init__` could previously *create a Pinecone
+index* as a side effect of importing the graph.
+
+**Phase 5 — Tests, cleanup, observability.** Dead code removed (5.3). Braintrust is now the
+sole exporter; Langfuse's module, callback wiring, parallel eval suite and dependency are
+gone, with redaction preserved in the provider-neutral `app/redaction.py` (5.2). The evals
+now measure the system that actually runs — exhaustive `get_controls_for_categories`,
+production's own control-shaping code, the cacheable system message, and a live file cache
+(5.4). `requirements.txt` installs for the first time, `_format_stream_error` stopped
+leaking raw exception text to the browser, the eval runner no longer logs in on import, and
+the frontend lints clean (5.5). The repo went from zero tests to 101 (5.1/5.6).
+
+## Deferred — deliberately not implemented
+
+These were out of scope under the owner's "demo / portfolio polish" decision and remain
+open:
+
+- **API authentication** — `/api/stream` and `/api/upload-policy` are unauthenticated.
+- **Rate limiting** — nothing bounds how many runs a caller can start.
+- **Per-tenant credentials** — one shared `GITHUB_PERSONAL_ACCESS_TOKEN` for every run, so
+  repo access is whatever that token can reach.
+- **LangGraph checkpointing** — the graph compiles without a checkpointer, so a run cannot
+  be resumed or replayed.
+- **Durable job model** (`POST /runs` → `run_id`) — work is tied to the SSE connection, so
+  **a closed browser tab still kills an in-flight run and loses all of its work.** This is
+  the most user-visible of the deferred items.
+
+Also still open, and noted rather than fixed: the falsifiable test behind the
+per-category work unit (see the architecture decision above) has not been run, so the
+choice of per-category over per-control fan-out remains unvalidated by evidence.

@@ -42,8 +42,11 @@ Backend requires `backend/.env` with:
 - `PINECONE_API_KEY` — hybrid vector search + reranking of the control corpus
 - `GITHUB_PERSONAL_ACCESS_TOKEN` — code retrieval via MCP
 - `LANGSMITH_API_KEY` / `LANGSMITH_ENDPOINT` — tracing
-- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` (or `LANGFUSE_BASE_URL`) — Langfuse tracing of the LangGraph run (optional; tracing is a no-op if unset). Optional `LANGFUSE_TRACING_ENVIRONMENT` (default `development`).
 - `CHROMA_PERSIST_DIR` — local Chroma path for policy-document RAG (default: `./chroma_db`)
+- `BRAINTRUST_API_KEY` — Braintrust tracing, the **only** tracing exporter (optional; the app boots and the graph runs without it). Langfuse was removed in Phase 5, so `LANGFUSE_*` variables are no longer read.
+- `CORS_ALLOW_ORIGINS` — comma-separated allowed browser origins (default: `http://localhost:3000,http://127.0.0.1:3000`)
+- `MAX_FILE_CONTENT_CHARS` — per-tool-result cap on fetched repo content (default: `10000`)
+- `MAX_POLICY_UPLOAD_BYTES` — `/api/upload-policy` size limit (default: 20 MB)
 
 Frontend reads `NEXT_PUBLIC_API_BASE_URL` (defaults to `http://127.0.0.1:8000`).
 
@@ -63,6 +66,9 @@ The core is a **LangGraph graph** in `agent.py`; nodes live in `nodes.py`. The a
 2. **`evidence_subagent_dispatch` → `evidence_subagent`** — a conditional edge fans out one `Send` **per cluster**; each runs the evidence sub-agent (`subagents.py`, a small `StateGraph` of gather → conclude using tools in `tools.py`) to search code/policies. Results accumulate into `evidence_items` (an `operator.add` reducer — never re-return the full list, or items double).
 3. **`prepare_validation_subagents`** merges evidence back into clusters (`update_clusters_with_evidence`), then **`validation_subagent_dispatch` → `validation_subagent`** fans out per cluster again, scoping evidence by `regulation_id` and producing a `ValidationBatch` of `ControlValidation`s (structured output from Sonnet).
 4. **`combine_validation_results`** — flattens all batches into the final `validation_results`.
+5. **`reconcile_validation_results`** — left-joins the full requested control roster (from `state["clusters"]`) against what the validators actually produced and backfills anything missing as `ERROR` (the cluster's subagent failed — see `cluster_errors`) or `NO_EVIDENCE` (the validator returned a short batch). Guarantees `len(validation_results)` equals the requested control count.
+
+Both `Send` targets isolate their own failures: an exception (including `GraphRecursionError`) in one cluster records a `cluster_errors` entry and degrades to sentinel results instead of aborting the run. Fan-out concurrency, LLM retries, and LLM timeouts are configured in `agent/resilience.py` via `CLUSTER_CONCURRENCY` / `LLM_MAX_RETRIES` / `LLM_TIMEOUT_SECONDS`.
 
 State flows through `ComplianceAgentState` (`state.py`). Key fields: `framework`, `category`, `source_code_categories`, `regulations`, `clusters`, `artifact_paths`, `evidence_items`, `validation_results`. Models are tiered in `nodes.py`: GPT for policy steps, Haiku for cheap extraction, Sonnet for final validation. Nodes emit live progress via `get_stream_writer()` (`status`/`updates` events).
 
@@ -77,5 +83,8 @@ State flows through `ComplianceAgentState` (`state.py`). Key fields: `framework`
 
 ### Key Types & Tools
 
-- `state.py` — `ComplianceAgentState`; `ControlValidation` (`status` pass/fail/partial/error, `severity`, `confidence`, `findings`, `evidence_snippets`); `EvidenceResult`.
+- `state.py` — `ComplianceAgentState`; `ControlValidation` (`status` PASS/FAIL/PARTIAL/NO_EVIDENCE/ERROR — `ERROR` is runtime-only and never emitted by the model, `severity`, `confidence`, `findings`, `evidence_snippets`); `EvidenceResult`.
+- `resilience.py` — sentinel `ControlValidation`/`EvidenceResult` builders, the shared cluster semaphore, and the LLM retry/timeout knobs.
 - `prompts.py` — sub-agent system prompts. `tools.py` — `think`, `conclude_evidence`, `finished_gathering_evidence` plus GitHub/RAG search. `clusters.py` — grouping + evidence merge logic.
+- `untrusted.py` — truncation + `<untrusted_*>` delimiting for everything read out of the audited repo. The repo is attacker-controlled relative to the auditor, so any new path that puts repo bytes in front of a model must go through `wrap_untrusted`. The evidence tools take **no `owner`/`repo` argument**: the repo is pinned from graph state (`repo_owner`/`repo_name`) via `InjectedState` in `subagent_nodes.py`.
+- `app/redaction.py` — `mask_value`, registered on Braintrust via `set_masking_function` in `app/main.py`. Provider-neutral so redaction survived the Braintrust consolidation and would survive the next one.

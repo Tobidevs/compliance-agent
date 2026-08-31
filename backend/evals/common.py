@@ -7,30 +7,36 @@ exactly one evidence subagent per case (invoking the compiled `evidence_subagent
 directly so execution STOPS at evidence gathering), and serializes the full message
 transcript. Both the Budget Adherence and Evidence Precision judges grade that same
 transcript, so the subagent runs once per case and is scored twice.
+
+The retrieval, control shape, system message, and MCP scope here are deliberately the ones
+`agent/nodes.py` uses in production rather than lookalikes: an eval that measures a
+differently-configured system measures nothing. Control construction goes through
+production's own `group_controls_into_clusters`, so a field cannot silently drop out of the
+eval's prompt the way `points_of_focus` once did.
 """
 
 import asyncio
+from functools import cache
 
 from braintrust import EvalCase
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
-from agent.prompts import EVIDENCE_SUBAGENT_SYSTEM_PROMPT
+from agent.budget import FETCHES_PER_CONTROL, TREES_PER_CONTROL, BudgetLedger
+from agent.clusters import group_controls_into_clusters
+from agent.prompts import EVIDENCE_SUBAGENT_SYSTEM_PROMPT, cacheable_system_message
+from agent.subagent_nodes import EVIDENCE_MODEL_ID
 from agent.subagents import evidence_subagent
 from agent.utils.agent_utils import _build_evidence_user_message
 from agent.utils.regulation_rag_service import RegulationRAGService, REGULATION_NAMESPACE
-from agent.utils.github_mcp import GitHubMCPManager
+from agent.utils.github_mcp import DirListing, get_github_mcp_manager
 
 load_dotenv()
 
-# Per-subagent budgets enforced by EVIDENCE_SUBAGENT_SYSTEM_PROMPT.
-TREE_BUDGET = 5  # get_repository_tree calls across all controls
-FILE_BUDGET = 8  # get_file_content calls across all controls
-
-# How many controls to retrieve per category from the vector DB (the actual workflow's
-# artifact_extractor_node uses top_k=10 with rerank_top_k=4).
-CONTROL_TOP_K = 10
-CONTROL_RERANK_TOP_K = 4
+# Per-subagent budgets, enforced at the tool boundary by agent/budget.py (not by the
+# prompt). These are PER CONTROL; a cluster's total is the cap times its control count.
+TREE_BUDGET = TREES_PER_CONTROL  # get_repository_tree calls per control
+FILE_BUDGET = FETCHES_PER_CONTROL  # get_file_content calls per control
 
 # Hardcoded eval cases. Each repo declares the SOC 2 categories (control families) to
 # scan, mirroring `source_code_categories` in the real workflow. Every category is
@@ -46,45 +52,37 @@ EVAL_REPOS = [
     },
 ]
 
-regulation_service = RegulationRAGService(index="compliance-frameworks")
-github_mcp_manager = GitHubMCPManager()
+
+@cache
+def get_regulation_service() -> RegulationRAGService:
+    """Lazy: at module scope this read Pinecone credentials just to import the module."""
+    return RegulationRAGService(index="compliance-frameworks")
 
 
 # ---------------------------------------------------------------------------
-# Dataset generation: per-category control retrieval -> one EvalCase per category
+# Dataset generation: exhaustive per-category retrieval -> one EvalCase per cluster
 # ---------------------------------------------------------------------------
-def _controls_from_regulations(regulations) -> list[dict]:
-    """Map retrieved regulation records to the control shape the subagent consumes."""
-    return [
-        {
-            "regulation_id": reg.fields["control_id"],
-            "title": reg.fields["title"],
-            "requirement": reg.fields["criterion_text"],
-        }
-        for reg in regulations
-    ]
+async def _clusters_for_repo(categories: list[str]) -> dict[str, list[dict]]:
+    """Retrieve and group controls exactly as `artifact_extractor_node` does.
 
-
-async def _retrieve_controls_for_category(framework, category):
-    """Pull the n controls for one category from the vector DB (specified-category
-    grouping — the queried category defines the group, matching the real workflow)."""
+    Production selects controls by exhaustive metadata filter, not by free-text top_k, so
+    the eval saw a reranked subset of each category — a different, smaller cluster than the
+    one the agent actually gets.
+    """
     regulations = await asyncio.to_thread(
-        regulation_service.query_regulations,
-        query=f"Retrieve {framework} control requirements for category {category}. ",
-        top_k=CONTROL_TOP_K,
-        rerank_top_k=CONTROL_RERANK_TOP_K,
+        get_regulation_service().get_controls_for_categories,
+        categories=categories,
         namespace=REGULATION_NAMESPACE,
-        category=category,
     )
-    return _controls_from_regulations(regulations)
+    return group_controls_into_clusters([reg.fields for reg in regulations])
 
 
 async def build_dataset():
-    """Async generator yielding one EvalCase per category (= one evidence subagent).
+    """Async generator yielding one EvalCase per cluster (= one evidence subagent).
 
-    For each repo we fetch the root artifact listing once, then retrieve each
-    category's controls and route that whole set to a single evidence subagent —
-    exactly how the real workflow dispatches one subagent per category.
+    For each repo we fetch the root artifact listing once, then retrieve every control in
+    the requested categories and route each category's whole set to a single evidence
+    subagent — exactly how the real workflow dispatches one subagent per cluster.
 
     Implemented as an async generator (not a coroutine returning a list) because the
     Braintrust CLI imports and runs the eval inside its own event loop and consumes
@@ -93,13 +91,17 @@ async def build_dataset():
     for repo in EVAL_REPOS:
         framework = repo["framework"]
         # Root file listing — fetched once per repo, shared across that repo's categories.
-        root_listing = await github_mcp_manager.fetch_path(
+        root_listing = await get_github_mcp_manager().fetch_path(
             owner=repo["repo_owner"], repo=repo["repo_name"], path=""
         )
-        artifact_paths = getattr(root_listing, "entries", [root_listing.path])
+        artifact_paths = (
+            root_listing.entries
+            if isinstance(root_listing, DirListing)
+            else [root_listing.path]
+        )
 
-        for category in repo["source_code_categories"]:
-            controls = await _retrieve_controls_for_category(framework, category)
+        clusters = await _clusters_for_repo(repo["source_code_categories"])
+        for cluster_id, controls in clusters.items():
             if not controls:
                 continue
 
@@ -108,17 +110,19 @@ async def build_dataset():
                     "repo_owner": repo["repo_owner"],
                     "repo_name": repo["repo_name"],
                     "framework": framework,
-                    "category": category,
+                    "category": cluster_id,
                     "controls": controls,
                     "artifact_paths": artifact_paths,
                 },
                 metadata={
-                    "category": category,
+                    "category": cluster_id,
                     "num_controls": len(controls),
                     "framework": framework,
                     "repo": f"{repo['repo_owner']}/{repo['repo_name']}",
-                    "tree_budget": TREE_BUDGET,
-                    "file_budget": FILE_BUDGET,
+                    "tree_budget_per_control": TREE_BUDGET,
+                    "file_budget_per_control": FILE_BUDGET,
+                    "tree_budget_total": TREE_BUDGET * len(controls),
+                    "file_budget_total": FILE_BUDGET * len(controls),
                 },
             )
 
@@ -178,12 +182,20 @@ async def task(input) -> str:
         "repo_owner": input["repo_owner"],
         "repo_name": input["repo_name"],
     }
+    # Same ledger production dispatch builds, so the eval measures the enforced system.
+    sub_input["budget"] = BudgetLedger.for_controls(sub_input["controls"])
     sub_input["messages"] = [
-        SystemMessage(content=EVIDENCE_SUBAGENT_SYSTEM_PROMPT),
+        # Cache breakpoint included: production sends this, and it changes the request shape.
+        cacheable_system_message(EVIDENCE_SUBAGENT_SYSTEM_PROMPT, EVIDENCE_MODEL_ID),
         HumanMessage(content=_build_evidence_user_message(sub_input)),
     ]
 
     # Invoking the compiled subgraph directly stops execution at evidence gathering;
     # the full compliance_agent graph would otherwise continue into validation.
-    result = await evidence_subagent.ainvoke(sub_input)
+    # cluster_scope mirrors invoke_evidence_subagent: without it there is no file cache, so
+    # the eval would grade an agent that pays budget for repeat fetches production serves free.
+    async with get_github_mcp_manager().cluster_scope():
+        result = await evidence_subagent.ainvoke(
+            sub_input, config={"recursion_limit": sub_input["budget"].recursion_limit()}
+        )
     return serialize_transcript(result["messages"])

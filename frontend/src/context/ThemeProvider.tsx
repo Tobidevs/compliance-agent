@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
@@ -13,47 +13,69 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 const STORAGE_KEY = "cc-theme";
 
+/* The persisted/system preference is an external store, not React state: reading it in a
+   mount effect meant a synchronous setState on every load (a cascading render). It is
+   subscribed to instead, which also keeps other tabs and the OS setting in sync. */
+const listeners = new Set<() => void>();
+// Mirrors the last value we wrote, so the theme still switches if localStorage throws.
+let written: Theme | null = null;
+
+function notify() {
+  listeners.forEach((listener) => listener());
+}
+
+function subscribe(onChange: () => void) {
+  listeners.add(onChange);
+  const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+  media?.addEventListener("change", onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    listeners.delete(onChange);
+    media?.removeEventListener("change", onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function getSnapshot(): Theme {
+  if (written) return written;
+  try {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
+  } catch {
+    /* storage unavailable */
+  }
+  return "light";
+}
+
+// The server has no preference to read; "light" keeps the first paint hydration-stable.
+function getServerSnapshot(): Theme {
+  return "light";
+}
+
+function writeTheme(next: Theme) {
+  written = next;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, next);
+  } catch {
+    /* storage unavailable */
+  }
+  notify();
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("light");
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  // Resolve the persisted / system preference on mount, then reflect it on
-  // <html data-theme> so the CSS variable overrides apply document-wide.
-  useEffect(() => {
-    let initial: Theme = "light";
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved === "light" || saved === "dark") initial = saved;
-      else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
-        initial = "dark";
-    } catch {
-      /* storage unavailable */
-    }
-    setThemeState(initial);
-  }, []);
-
+  // Reflect the resolved theme on <html data-theme> so the CSS variable overrides apply
+  // document-wide. Writing to the DOM is what effects are for; no state is set here.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  const setTheme = useCallback((t: Theme) => {
-    setThemeState(t);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, t);
-    } catch {
-      /* storage unavailable */
-    }
-  }, []);
+  const setTheme = useCallback((t: Theme) => writeTheme(t), []);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
-      try {
-        window.localStorage.setItem(STORAGE_KEY, next);
-      } catch {
-        /* storage unavailable */
-      }
-      return next;
-    });
+    writeTheme(getSnapshot() === "dark" ? "light" : "dark");
   }, []);
 
   return (

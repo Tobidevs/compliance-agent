@@ -10,15 +10,12 @@ import { useEffect, useRef, useState } from "react";
    the resting value of 1 even if rAF is throttled.
    ============================================================ */
 export function useReveal(active: boolean, enabled = true, duration = 950) {
-  const [reveal, setReveal] = useState(active ? 0 : 1);
+  const [progress, setProgress] = useState(0);
   const rafRef = useRef<number | undefined>(undefined);
   const safetyRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
-    if (!active) {
-      setReveal(1);
-      return;
-    }
+    if (!active) return;
 
     const prefersReduced =
       typeof window !== "undefined" &&
@@ -26,20 +23,23 @@ export function useReveal(active: boolean, enabled = true, duration = 950) {
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     if (!enabled || prefersReduced) {
-      setReveal(1);
-      return;
+      // Settled in a frame callback rather than the effect body: a synchronous setState
+      // there cascades an extra render on every mount.
+      rafRef.current = requestAnimationFrame(() => setProgress(1));
+      return () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      };
     }
 
-    setReveal(0);
     const start = performance.now();
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - p, 3);
-      setReveal(eased);
+      setProgress(eased);
       if (p < 1) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-    safetyRef.current = setTimeout(() => setReveal(1), duration + 200);
+    safetyRef.current = setTimeout(() => setProgress(1), duration + 200);
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -47,5 +47,7 @@ export function useReveal(active: boolean, enabled = true, duration = 950) {
     };
   }, [active, enabled, duration]);
 
-  return reveal;
+  // Derived, not stored: an inactive reveal is fully revealed by definition, so
+  // deactivating mid-animation cannot strand the value part-way.
+  return active ? progress : 1;
 }

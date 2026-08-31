@@ -7,10 +7,17 @@ load_dotenv()
 
 
 class PineconeClient:
-    def __init__(self, index_name: str, pc: Pinecone | None = None):
+    def __init__(
+        self,
+        index_name: str,
+        pc: Pinecone | None = None,
+        create_if_missing: bool = False,
+    ):
         self.pc = pc or Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         self.index_name = index_name
-        if not self.pc.has_index(index_name):
+        # Read paths must never provision infrastructure, and skipping has_index() also
+        # drops a network round-trip from every construction. Ingestion creates the index.
+        if create_if_missing and not self.pc.has_index(index_name):
             self.pc.create_index(
                 name=index_name,
                 vector_type="dense",

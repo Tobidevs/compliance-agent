@@ -18,7 +18,8 @@ export type ValidationFinding = {
 export type ControlValidation = {
   regulation_id: string;
   title: string;
-  status: "PASS" | "FAIL" | "PARTIAL" | "NO_EVIDENCE";
+  // ERROR is emitted by the backend runtime when a control could not be assessed.
+  status: "PASS" | "FAIL" | "PARTIAL" | "NO_EVIDENCE" | "ERROR";
   severity?: "critical" | "high" | "medium" | "low" | null;
   confidence: number;
   confidence_label: "High" | "Medium" | "Low" | "Inconclusive";

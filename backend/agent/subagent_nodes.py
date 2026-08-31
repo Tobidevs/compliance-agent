@@ -1,39 +1,142 @@
 import json
 import os
+from functools import cache
+from typing import Annotated
+
 import braintrust
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
+from langgraph.prebuilt import InjectedState
 
+from .budget import BudgetLedger
+from .compaction import compact_thread
+from .resilience import (
+    DESERIALIZATION_ERRORS,
+    LLM_MAX_RETRIES,
+    LLM_TIMEOUT_SECONDS,
+    degraded_evidence_result,
+    format_error,
+)
 from .tools import conclude_evidence, finished_gathering_evidence, think
 
 from .state import EvidenceResult, SubAgentInput
-from .utils.github_mcp import GitHubMCPManager
+from .utils.github_mcp import get_github_mcp_manager
 
 load_dotenv()
 
-github_mcp_manager = GitHubMCPManager()
+
+_NO_REPO_PINNED = (
+    "REPOSITORY NOT CONFIGURED — no repository is pinned for this run, so no data was "
+    "fetched. Conclude the current control with no_evidence_found=true."
+)
+
+
+def _pinned_repo(state: dict) -> tuple[str, str]:
+    """The repo under audit comes from graph state only, never from the model."""
+    return (
+        str(state.get("repo_owner") or "").strip(),
+        str(state.get("repo_name") or "").strip(),
+    )
+
+
+@tool("get_file_content")
+async def get_file_content(path: str, state: Annotated[dict, InjectedState]) -> str:
+    """Retrieve the content of a file from the repository under audit.
+
+    If path is a folder, returns the list of paths it contains instead.
+    """
+    owner, repo = _pinned_repo(state)
+    if not owner or not repo:
+        return _NO_REPO_PINNED
+    manager = get_github_mcp_manager()
+    # Served from this cluster's cache: no MCP call, so no budget is spent. This is what
+    # lets controls in one category share files instead of re-fetching them each.
+    cached = manager.cached_file_content(owner, repo, path)
+    if cached is not None:
+        return cached
+    ledger = state.get("budget")
+    refusal = ledger.spend("fetch") if ledger is not None else None
+    # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
+    if refusal:
+        return refusal
+    return await manager.get_file_content(owner=owner, repo=repo, path=path)
+
+
+@tool("get_repository_tree")
+async def get_repository_tree(
+    state: Annotated[dict, InjectedState],
+    tree_sha: str | None = None,
+    recursive: bool = False,
+    path_filter: str | None = None,
+) -> str:
+    """Retrieve a subdirectory tree from the repository under audit."""
+    owner, repo = _pinned_repo(state)
+    if not owner or not repo:
+        return _NO_REPO_PINNED
+    ledger = state.get("budget")
+    refusal = ledger.spend("tree") if ledger is not None else None
+    # Refused calls never reach the MCP client, so the budget is a hard cost ceiling.
+    if refusal:
+        return refusal
+    return await get_github_mcp_manager().get_repository_tree(
+        owner=owner,
+        repo=repo,
+        tree_sha=tree_sha,
+        recursive=recursive,
+        path_filter=path_filter,
+    )
+
+
+# Single source of truth for the subagent's tools: bound to the model and run by ToolNode.
+EVIDENCE_TOOLS = [
+    get_file_content,
+    get_repository_tree,
+    conclude_evidence,
+    finished_gathering_evidence,
+    think,
+]
 
 # Swap providers via env, e.g. EVIDENCE_SUBAGENT_MODEL="openai:gpt-5.4-mini".
-evidence_model = init_chat_model(
-    model=os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5")
-)
-llm = evidence_model.bind_tools(
-    [
-        github_mcp_manager.get_file_content,
-        github_mcp_manager.get_repository_tree,
-        conclude_evidence,
-        finished_gathering_evidence,
-        think,
-    ]
-)
+EVIDENCE_MODEL_ID = os.getenv("EVIDENCE_SUBAGENT_MODEL", "anthropic:claude-haiku-4-5")
+
+
+@cache
+def get_evidence_llm():
+    """Lazy: constructing a chat model at import time reads provider credentials."""
+    evidence_model = init_chat_model(
+        model=EVIDENCE_MODEL_ID,
+        max_retries=LLM_MAX_RETRIES,
+        timeout=LLM_TIMEOUT_SECONDS,
+    )
+    return evidence_model.bind_tools(EVIDENCE_TOOLS)
 
 
 def _parse_tool_content(content):
     if isinstance(content, str):
-        return json.loads(content)
+        # Tool content is model-adjacent text; non-JSON must not kill the subagent.
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
     return content
+
+
+def _coerce_evidence_result(raw_result) -> EvidenceResult | None:
+    """Build an EvidenceResult, degrading to a placeholder rather than raising."""
+    if isinstance(raw_result, EvidenceResult):
+        return raw_result
+    if not isinstance(raw_result, dict):
+        return None
+    try:
+        return EvidenceResult(**raw_result)
+    except DESERIALIZATION_ERRORS as error:
+        # Keep the control visible downstream whenever the id survived the malformed payload.
+        if not str(raw_result.get("regulation_id") or "").strip():
+            return None
+        return degraded_evidence_result(raw_result, format_error(error))
 
 
 def _find_matching_tool_call_args(state: SubAgentInput, tool_message) -> dict | None:
@@ -63,12 +166,13 @@ def _extract_concluded_evidence_result(state: SubAgentInput) -> list[EvidenceRes
     if conclusion is None:
         conclusion = _parse_tool_content(last_message.content)
 
-    raw_result = conclusion.get("evidence_result", conclusion)
+    if isinstance(conclusion, dict):
+        raw_result = conclusion.get("evidence_result", conclusion)
+    else:
+        raw_result = conclusion
 
-    if isinstance(raw_result, EvidenceResult):
-        return [raw_result]
-
-    return [EvidenceResult(**raw_result)]
+    evidence_result = _coerce_evidence_result(raw_result)
+    return [evidence_result] if evidence_result else []
 
 
 def _extract_pending_concluded_evidence_results(
@@ -100,11 +204,18 @@ def _extract_pending_concluded_evidence_results(
 
 
 @braintrust.traced(name="gather_evidence")
-def gather_evidence_node(state: SubAgentInput):
+async def gather_evidence_node(state: SubAgentInput):
     writer = get_stream_writer()
 
     evidence_results = _extract_concluded_evidence_result(state)
-    response = llm.invoke(state["messages"])
+
+    # Self-heal for callers that invoke the subgraph directly (evals) without a ledger.
+    ledger = state.get("budget") or BudgetLedger.for_controls(state.get("controls", []))
+    # Runs before every tool batch, so the per-control counters track the current control.
+    ledger.sync_progress(state["messages"])
+
+    # State keeps the full thread; only what the model is billed for is compacted.
+    response = await get_evidence_llm().ainvoke(compact_thread(state["messages"]))
 
     # search_paths = ", ".join(
     #     f"/{tool_call['args'].get('path', '')}"
@@ -116,7 +227,7 @@ def gather_evidence_node(state: SubAgentInput):
     #     "message": f"Searching {search_paths}",
     # })
 
-    result = {"messages": [response]}
+    result = {"messages": [response], "budget": ledger}
     if evidence_results:
         result["evidence_results"] = evidence_results
     return result

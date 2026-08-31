@@ -1,27 +1,44 @@
 import json
-import shutil
+import logging
 import os
+import re
 import tempfile
-from pathlib import Path
 
-from contextlib import nullcontext
+from functools import cache
 
 import braintrust
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from langfuse import get_client
-from langfuse.langchain import CallbackHandler
 from agent.utils.policy_rag_service import PolicyRAGService
 from agent.agent import compliance_agent
-from .observability import langfuse_enabled, langfuse_trace
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-policy_service = PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
+
+
+@cache
+def get_policy_service() -> PolicyRAGService:
+    """Lazy: building this at import made the app unbootable without Pinecone credentials."""
+    return PolicyRAGService(persist_directory=CHROMA_PERSIST_DIRECTORY)
+
+
+# policy_id keys documents in a shared Chroma collection, so it must be an opaque slug.
+POLICY_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+MAX_POLICY_UPLOAD_BYTES = max(
+    1024, int(os.getenv("MAX_POLICY_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+)
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._ -]")
+
+
+_GENERIC_STREAM_ERROR = "The compliance agent failed unexpectedly. Please try again."
 
 
 def _format_stream_error(error: Exception) -> str:
+    """Browser-safe error copy. Raw exception text never crosses this boundary: it carries
+    internal paths, model ids, and upstream API detail. The detail is logged instead."""
     raw_message = " ".join(str(error).split()).strip()
     lowered_message = raw_message.lower()
 
@@ -48,10 +65,9 @@ def _format_stream_error(error: Exception) -> str:
             "Please try again in a moment."
         )
 
-    if not raw_message:
-        return "The compliance agent failed unexpectedly. Please try again."
+    # Unclassified failures are reported generically; see the server log for the detail.
+    return _GENERIC_STREAM_ERROR
 
-    return f"Compliance agent failed: {raw_message}"
 
 class StreamRequest(BaseModel):
     framework: str
@@ -60,10 +76,17 @@ class StreamRequest(BaseModel):
     repo_owner: str
     repo_name: str
 
+def _safe_filename(raw: str | None) -> str:
+    """Store a display name only; the uploader never influences the path we write to."""
+    cleaned = _SAFE_FILENAME_RE.sub("_", (raw or "policy.pdf").strip())
+    return cleaned[:128] or "policy.pdf"
+
+
 @router.post("/upload-policy")
-async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
-    filename = policy_file.filename or "policy.pdf"
-    suffix = Path(filename).suffix or ".pdf"
+async def upload_policy(
+    policy_id: str = Query(..., pattern=POLICY_ID_PATTERN, max_length=64),
+    policy_file: UploadFile = File(...),
+):
     file_path = None
     try:
         header = await policy_file.read(5)
@@ -74,16 +97,26 @@ async def upload_policy(policy_id: str, policy_file: UploadFile = File(...)):
                 detail="Invalid file format. Please upload a valid PDF file.",
             )
 
+        # Suffix is fixed rather than derived from the uploaded filename, and the body is
+        # streamed so an oversized upload is rejected instead of buffered to disk in full.
         with tempfile.NamedTemporaryFile(
-            prefix="policy_", suffix=suffix, delete=False
+            prefix="policy_", suffix=".pdf", delete=False
         ) as temp_file:
             file_path = temp_file.name
-            shutil.copyfileobj(policy_file.file, temp_file)
+            uploaded_bytes = 0
+            while chunk := await policy_file.read(_UPLOAD_CHUNK_BYTES):
+                uploaded_bytes += len(chunk)
+                if uploaded_bytes > MAX_POLICY_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Policy file exceeds the {MAX_POLICY_UPLOAD_BYTES:,}-byte upload limit.",
+                    )
+                temp_file.write(chunk)
 
-        policy_service.add_policy(
+        get_policy_service().add_policy(
             policy_id=policy_id,
             policy_file=file_path,
-            metadata={"filename": policy_file.filename},
+            metadata={"filename": _safe_filename(policy_file.filename)},
         )
     except HTTPException:
         raise
@@ -137,35 +170,16 @@ async def stream_results(
         "source_code_categories": initial_state["source_code_categories"],
     }
 
-    # Pass the Langfuse handler into the graph so every nested LLM call (evidence and
-    # validation subagents) is captured automatically; group runs by repo via session_id.
-    use_langfuse = langfuse_enabled()
-    config = {"callbacks": [CallbackHandler()]} if use_langfuse else None
-    langfuse_cm = (
-        langfuse_trace(
-            name="compliance_run",
-            input=trace_input,
-            session_id=repo,
-            tags=[initial_state["framework"], "compliance-run"],
-            metadata={
-                "repo": repo,
-                "source_code_categories": ", ".join(
-                    initial_state["source_code_categories"]
-                ),
-            },
-        )
-        if use_langfuse
-        else nullcontext()
-    )
-
+    # Braintrust is the sole exporter: its global LangChain handler (installed in main.py)
+    # already captures every nested LLM call, so no per-run callback is threaded in here.
     async def event_generator():
         with braintrust.start_span(
             name="compliance_run",
             input=trace_input,
-        ) as span, langfuse_cm as lf_span:
+        ) as span:
             try:
                 async for mode, data in compliance_agent.astream(
-                    initial_state, stream_mode=["custom", "updates"], config=config
+                    initial_state, stream_mode=["custom", "updates"]
                 ):
                     if mode == "custom":
                         yield f"data: {json.dumps(_normalize_custom_event(data), default=_json_default)}\n\n"
@@ -176,19 +190,11 @@ async def stream_results(
                         }, default=_json_default)}\n\n"
 
                 span.log(output={"status": "completed"})
-                if lf_span is not None:
-                    lf_span.update(output={"status": "completed"})
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
             except Exception as error:
                 span.log(output={"status": "error", "message": str(error)})
-                if lf_span is not None:
-                    lf_span.update(
-                        output={"status": "error", "message": str(error)}
-                    )
+                logger.exception("Compliance run failed for %s", repo)
                 yield f"data: {json.dumps({'type': 'error', 'message': _format_stream_error(error)})}\n\n"
-            finally:
-                if use_langfuse:
-                    get_client().flush()
 
     return StreamingResponse(
         event_generator(),

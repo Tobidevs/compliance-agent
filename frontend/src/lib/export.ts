@@ -66,7 +66,8 @@ export async function copySummary(metrics: ResultMetrics, repo: string) {
     `Avg confidence ${Math.round(metrics.confidence)}% · ` +
     `${metrics.total} controls\n` +
     `Pass ${metrics.status.PASS} · Partial ${metrics.status.PARTIAL} · ` +
-    `Fail ${metrics.status.FAIL} · No evidence ${metrics.status.NO_EVIDENCE}`;
+    `Fail ${metrics.status.FAIL} · No evidence ${metrics.status.NO_EVIDENCE} · ` +
+    `Not assessed ${metrics.status.ERROR}`;
   try {
     if (navigator.clipboard) await navigator.clipboard.writeText(text);
   } catch {

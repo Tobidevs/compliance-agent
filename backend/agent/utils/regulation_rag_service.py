@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from dotenv import load_dotenv
 
 from pinecone import Pinecone
@@ -13,26 +15,68 @@ load_dotenv()
 # used to build the semantic query string.
 REGULATION_NAMESPACE = "SOC2&GDPR"
 
+# The control corpus is a static 37-row CSV, but every run re-embedded and re-fetched all
+# 12 categories. A TTL keeps it refreshable after a re-ingestion without paying per run.
+CONTROL_CACHE_TTL_SECONDS = float(os.getenv("CONTROL_CACHE_TTL_SECONDS", "900"))
+
+# Keyed by (index, namespace, category); read from asyncio worker threads, hence the lock.
+_control_cache: dict[tuple, tuple[float, list]] = {}
+_control_cache_lock = threading.Lock()
+
+
+def clear_control_cache() -> None:
+    """Drop the cached corpus, e.g. straight after re-running data ingestion."""
+    with _control_cache_lock:
+        _control_cache.clear()
+
 
 class RegulationRAGService:
     def __init__(self, index: str, namespace: str = REGULATION_NAMESPACE, pc: Pinecone | None = None):
         self.pc = pc or Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         self.vector_store = PineconeClient(index_name=index, pc=self.pc)
         self.namespace = namespace
+        self.index_name = index
 
-    def _embed_query(self, query: str):
-        """Embed a query string for hybrid (dense + sparse) search."""
+    def _embed_queries(self, queries: list[str]):
+        """Embed many query strings in one dense + one sparse round-trip, not two per query."""
         dense = self.pc.inference.embed(
             model="llama-text-embed-v2",
-            inputs=query,
+            inputs=queries,
             parameters={"input_type": "query", "truncate": "END"},
         )
         sparse = self.pc.inference.embed(
             model="pinecone-sparse-english-v0",
-            inputs=query,
+            inputs=queries,
             parameters={"input_type": "query", "truncate": "END"},
         )
-        return dense[0], sparse[0]
+        return [(dense[i], sparse[i]) for i in range(len(queries))]
+
+    def _embed_query(self, query: str):
+        """Embed a query string for hybrid (dense + sparse) search."""
+        return self._embed_queries([query])[0]
+
+    def _cache_key(self, namespace: str, category: str) -> tuple:
+        return (self.index_name, namespace, category)
+
+    def _cached_controls(self, namespace: str, category: str):
+        """Cached hits for one category, or None on a miss. An empty category caches as []."""
+        key = self._cache_key(namespace, category)
+        with _control_cache_lock:
+            entry = _control_cache.get(key)
+            if entry is None:
+                return None
+            expires_at, hits = entry
+            if expires_at <= time.monotonic():
+                _control_cache.pop(key, None)
+                return None
+            return hits
+
+    def _cache_controls(self, namespace: str, category: str, hits) -> None:
+        with _control_cache_lock:
+            _control_cache[self._cache_key(namespace, category)] = (
+                time.monotonic() + CONTROL_CACHE_TTL_SECONDS,
+                hits,
+            )
 
     def get_controls_for_categories(
         self,
@@ -43,22 +87,42 @@ class RegulationRAGService:
         Return *every* control belonging to the given category/categories.
 
         This is the primary path used by the pipeline: the caller already knows
-        which categories it wants, so selection is a metadata filter.
+        which categories it wants, so selection is a metadata filter. The vector only
+        orders results inside that exhaustive filter, so the embeddings for all uncached
+        categories are batched into a single pair of calls rather than two per category.
         """
         if isinstance(categories, str):
             categories = [categories]
 
         ns = namespace or self.namespace
+        pending = list(
+            dict.fromkeys(
+                category
+                for category in categories
+                if self._cached_controls(ns, category) is None
+            )
+        )
+
+        fetched: dict[str, list] = {}
+        if pending:
+            for category, (dense, sparse) in zip(pending, self._embed_queries(pending)):
+                hits = self.vector_store.fetch_by_filter(
+                    namespace=ns,
+                    vector=dense["values"],
+                    sparse_values=sparse["sparse_values"],
+                    sparse_indices=sparse["sparse_indices"],
+                    filter={"category": {"$eq": category}},
+                )
+                fetched[category] = hits
+                self._cache_controls(ns, category, hits)
+
         results = []
         for category in categories:
-            dense, sparse = self._embed_query(category)
-            hits = self.vector_store.fetch_by_filter(
-                namespace=ns,
-                vector=dense["values"],
-                sparse_values=sparse["sparse_values"],
-                sparse_indices=sparse["sparse_indices"],
-                filter={"category": {"$eq": category}},
-            )
+            # Prefer what we just fetched: a zero/short TTL must disable caching, never
+            # silently drop controls out of the returned roster.
+            hits = fetched.get(category)
+            if hits is None:
+                hits = self._cached_controls(ns, category) or []
             results.extend(hits)
         return results
 
